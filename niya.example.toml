@@ -1,0 +1,12 @@
+# VPS 上放在 /etc/niya/niya.toml；本機可用 --config 或 NIYA_CONFIG 指定。
+# 密鑰（OPENROUTER_API_KEY 等）不要寫在這裡，放在環境變數或 /etc/niya/niya.env。
+
+[agent]
+model = ""                  # OpenRouter 模型 ID，例如 anthropic/claude-sonnet-4.5
+timezone = "Asia/Taipei"
+max_iterations = 40         # 一回合最多幾次工具呼叫
+max_context_tokens = 200000 # 和模型上限取較小值，是控制成本的旋鈕
+
+[paths]
+home = "/var/lib/niya"
+persona = "/etc/niya/persona.md"

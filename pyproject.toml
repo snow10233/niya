@@ -1,0 +1,19 @@
+[project]
+name = "niya"
+version = "0.1.0"
+description = "會睡覺、會遺忘、有時間感的長期運行 agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28,<1",
+]
+
+[project.scripts]
+niya = "niya.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/niya"]
