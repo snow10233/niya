@@ -22,7 +22,18 @@ class ToolContext:
     extras: dict[str, Any] = field(default_factory=dict)
 
 
-Handler = Callable[[dict[str, Any], ToolContext], Awaitable[str]]
+@dataclass(frozen=True)
+class ToolText:
+    """A handler result that came from outside niya (web page, curl output, MCP server)."""
+
+    text: str
+    external: bool = False
+    source: str | None = None
+
+
+Handler = Callable[[dict[str, Any], ToolContext], Awaitable["str | ToolText"]]
+# Applied to every tool result before truncation (secret redaction, sanitizing); the bool says it is external.
+OutputFilter = Callable[[str, "Tool", bool], str]
 
 
 @dataclass(frozen=True)
@@ -35,6 +46,8 @@ class Tool:
     parallel_safe: bool = False
     timeout_s: float = 120.0
     max_result_chars: int = 20_000
+    # "file": output is file content (secrets get a non-reusable sentinel); "external": always from outside niya.
+    output_kind: str = "default"
 
     def schema(self) -> dict[str, Any]:
         return {"type": "function", "function": {"name": self.name, "description": self.description, "parameters": self.parameters}}
@@ -46,6 +59,7 @@ class ToolOutcome:
     content: str
     full_content: str
     is_error: bool = False
+    external_source: str | None = None
 
 
 def truncate(text: str, limit: int) -> str:
@@ -58,9 +72,10 @@ def truncate(text: str, limit: int) -> str:
 
 
 class ToolRegistry:
-    def __init__(self, tools: Iterable[Tool] = ()) -> None:
+    def __init__(self, tools: Iterable[Tool] = (), *, output_filters: Sequence[OutputFilter] = ()) -> None:
         self._tools: dict[str, Tool] = {}
         self._schemas: list[dict[str, Any]] | None = None
+        self.output_filters = list(output_filters)
         for tool in tools:
             self.register(tool)
 
@@ -77,7 +92,7 @@ class ToolRegistry:
         return sorted(self._tools)
 
     def subset(self, names: Iterable[str]) -> "ToolRegistry":
-        return ToolRegistry(self._tools[n] for n in names if n in self._tools)
+        return ToolRegistry((self._tools[n] for n in names if n in self._tools), output_filters=self.output_filters)
 
     def schemas(self) -> list[dict[str, Any]]:
         # Sorted and cached so the tools block stays byte-identical for prefix caching.
@@ -116,7 +131,7 @@ class ToolRegistry:
             return _error(call, "參數必須是 JSON 物件。")
         try:
             async with asyncio.timeout(tool.timeout_s):
-                text = await tool.handler(args, ctx)
+                result = await tool.handler(args, ctx)
         except TimeoutError:
             return _error(call, f"工具執行逾時（{tool.timeout_s:g} 秒）。")
         except ToolError as exc:
@@ -124,7 +139,18 @@ class ToolRegistry:
         except Exception as exc:
             log.exception("tool %s failed", call.name)
             return _error(call, f"工具執行失敗：{type(exc).__name__}: {exc}")
-        return ToolOutcome(call=call, content=truncate(text, tool.max_result_chars), full_content=text)
+        if isinstance(result, ToolText):
+            text, external, source = result.text, result.external or tool.output_kind == "external", result.source
+        else:
+            text, external, source = result, tool.output_kind == "external", None
+        for output_filter in self.output_filters:
+            text = output_filter(text, tool, external)
+        return ToolOutcome(
+            call=call,
+            content=truncate(text, tool.max_result_chars),
+            full_content=text,
+            external_source=(source or tool.name) if external else None,
+        )
 
 
 def _error(call: ToolCall, message: str) -> ToolOutcome:
