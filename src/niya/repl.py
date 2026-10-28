@@ -6,22 +6,27 @@ from niya.config import Settings
 from niya.db import Database
 from niya.inbox import InboundItem
 from niya.llm import LLMError, OpenRouterClient, db_recorder
-from niya.runtime import open_conversation, restart_conversation, system_prompt_factory
-from niya.tools.registry import ToolRegistry
+from niya.runtime import build_core_tools, open_conversation, restart_conversation, system_prompt_factory
+from niya.tools.processes import BackgroundProcess
 
 HELP = "指令：/new 開新 session、/quit 離開"
 
 
-async def run_repl(settings: Settings, tools: ToolRegistry | None = None) -> int:
+def _announce_exit(bg: BackgroundProcess) -> None:
+    print(f"\n[背景程序 {bg.id} 結束，exit {bg.exit_code}] {bg.command}")
+
+
+async def run_repl(settings: Settings) -> int:
     db = Database(settings.db_path)
     clock = RealClock()
     llm = OpenRouterClient(settings.api_key, base_url=settings.base_url, recorder=db_recorder(db, clock))
     prompt = system_prompt_factory(settings, channel="主人的終端機")
+    tools = build_core_tools(settings, clock, on_process_exit=_announce_exit)
     conv = open_conversation(db, settings, clock, prompt)
     agent = Agent(
         llm=llm,
         model=settings.model,
-        tools=tools or ToolRegistry(),
+        tools=tools.registry,
         conversation=conv,
         clock=clock,
         max_iterations=settings.max_iterations,
@@ -49,6 +54,7 @@ async def run_repl(settings: Settings, tools: ToolRegistry | None = None) -> int
             if not result.silent:
                 print(f"niya> {result.text}")
     finally:
+        await tools.close()
         await llm.aclose()
         db.close()
     return 0
