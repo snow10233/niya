@@ -60,6 +60,48 @@ MIGRATIONS: list[str] = [
       error TEXT
     );
     """,
+    """
+    ALTER TABLE sessions ADD COLUMN tainted_at REAL;
+    ALTER TABLE sessions ADD COLUMN taint_source TEXT;
+    ALTER TABLE sessions ADD COLUMN taint_turn_id TEXT;
+
+    CREATE TABLE egress_known_hosts(
+      host TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      created_at REAL NOT NULL,
+      last_seen REAL NOT NULL
+    );
+
+    CREATE TABLE egress_pending(
+      id INTEGER PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      turn_id TEXT,
+      command TEXT NOT NULL,
+      hosts TEXT NOT NULL,
+      taint_source TEXT,
+      created_at REAL NOT NULL,
+      expires_at REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_at REAL,
+      notified_expired INTEGER NOT NULL DEFAULT 0,
+      used_at REAL
+    );
+    CREATE INDEX idx_egress_pending_session ON egress_pending(session_id, status);
+
+    CREATE TABLE egress_log(
+      id INTEGER PRIMARY KEY,
+      ts REAL NOT NULL,
+      session_id TEXT,
+      turn_id TEXT,
+      command TEXT NOT NULL,
+      program TEXT,
+      hosts TEXT,
+      local_data INTEGER,
+      tainted INTEGER,
+      suspicious INTEGER,
+      outcome TEXT
+    );
+    """,
 ]
 
 

@@ -25,6 +25,8 @@ class Settings:
     persona_path: Path | None = None
     searxng_url: str = ""
     allow_private_urls: bool = False
+    egress_allow_hosts: tuple[str, ...] = ()
+    egress_taint_scope: str = "session"
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
@@ -63,6 +65,7 @@ def load_settings(
     agent = data.get("agent", {})
     paths = data.get("paths", {})
     web = data.get("web", {})
+    egress = data.get("egress", {})
 
     home = Path(env["NIYA_HOME"]) if env.get("NIYA_HOME") else Path(paths["home"]) if paths.get("home") else default_home(env)
     timezone = env.get("NIYA_TIMEZONE") or agent.get("timezone", "Asia/Taipei")
@@ -87,5 +90,7 @@ def load_settings(
         persona_path=Path(persona) if persona else None,
         searxng_url=env.get("SEARXNG_URL") or web.get("searxng_url", ""),
         allow_private_urls=bool(web.get("allow_private_urls", False)),
+        egress_allow_hosts=tuple(egress.get("allow_hosts", ())),
+        egress_taint_scope=egress.get("taint_scope", "session"),
         secrets=secrets,
     )

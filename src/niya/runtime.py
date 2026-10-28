@@ -14,13 +14,14 @@ from niya.clock import Clock
 from niya.config import Settings
 from niya.db import Database
 from niya.redact import Redactor
+from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
 from niya.tools.processes import BackgroundProcess, ProcessRegistry
 from niya.tools.protected_paths import ProtectedPaths
-from niya.tools.registry import OutputFilter, Tool, ToolRegistry
+from niya.tools.registry import OutputFilter, Tool, ToolContext, ToolOutcome, ToolRegistry
 from niya.tools.shell import ShellSession
-from niya.tools.terminal import hardline_guard, terminal_tools
+from niya.tools.terminal import egress_guard, hardline_guard, terminal_tools
 from niya.tools.url_safety import set_allow_private_urls
 from niya.tools.web import web_tools
 from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, SearchProvider, SearXNG, Tavily
@@ -55,6 +56,7 @@ class CoreTools:
     registry: ToolRegistry
     shell: ShellSession
     processes: ProcessRegistry
+    egress: EgressGate
     clients: list[httpx.AsyncClient] = field(default_factory=list)
 
     async def close(self) -> None:
@@ -96,17 +98,31 @@ def web_providers(settings: Settings, http: httpx.AsyncClient) -> tuple[SearchPr
     return None, native
 
 
-def build_core_tools(settings: Settings, clock: Clock, *, on_process_exit: Callable[[BackgroundProcess], None] | None = None) -> CoreTools:
+def build_core_tools(
+    settings: Settings,
+    db: Database,
+    clock: Clock,
+    *,
+    notify_owner: Notifier | None = None,
+    on_process_exit: Callable[[BackgroundProcess], None] | None = None,
+) -> CoreTools:
     shell = ShellSession(settings.home / "cache" / "shell", secret_names=settings.secrets.keys())
     processes = ProcessRegistry(settings.home / "processes", now=clock.now, on_exit=on_process_exit)
-    guards = [hardline_guard(default_hardline(protected_dirs(settings)))]
+    detector = EgressDetector()
+    gate = EgressGate(db, now=clock.now, detector=detector, allow_hosts=settings.egress_allow_hosts, taint_scope=settings.egress_taint_scope, notify=notify_owner)
+    guards = [hardline_guard(default_hardline(protected_dirs(settings))), egress_guard(gate, lambda: shell.cwd)]
     http = httpx.AsyncClient(timeout=60)
     search, extract = web_providers(settings, http)
     tools = [
-        *terminal_tools(shell, processes, guards),
+        *terminal_tools(shell, processes, guards, is_fetch=detector.fetches_network),
         *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings))),
         *web_tools(search, extract, secrets=settings.secrets.values),
     ]
-    registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())))
+
+    def taint(ctx: ToolContext, outcome: ToolOutcome) -> None:
+        if outcome.external_source:
+            gate.mark_tainted(ctx.session_id, ctx.turn_id, outcome.external_source)
+
+    registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else [])
-    return CoreTools(registry=registry, shell=shell, processes=processes, clients=clients)
+    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, clients=clients)
