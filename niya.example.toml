@@ -10,3 +10,9 @@ max_context_tokens = 200000 # 和模型上限取較小值，是控制成本的�
 [paths]
 home = "/var/lib/niya"
 persona = "/etc/niya/persona.md"
+
+[web]
+# 搜尋服務依序選用：TAVILY_API_KEY（搜尋＋擷取）→ BRAVE_SEARCH_API_KEY → searxng_url。
+# 沒有 Tavily 時，web_extract 直接抓網頁（會擋內部與私有網路）。
+searxng_url = ""
+allow_private_urls = false   # 允許抓私有網段（雲端 metadata 位址永遠擋）

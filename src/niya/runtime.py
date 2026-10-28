@@ -1,7 +1,9 @@
 import getpass
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+import httpx
 
 import niya
 
@@ -19,6 +21,9 @@ from niya.tools.protected_paths import ProtectedPaths
 from niya.tools.registry import OutputFilter, Tool, ToolRegistry
 from niya.tools.shell import ShellSession
 from niya.tools.terminal import hardline_guard, terminal_tools
+from niya.tools.url_safety import set_allow_private_urls
+from niya.tools.web import web_tools
+from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, SearchProvider, SearXNG, Tavily
 
 CODE_DIR = Path(niya.__file__).resolve().parents[2]
 
@@ -50,10 +55,13 @@ class CoreTools:
     registry: ToolRegistry
     shell: ShellSession
     processes: ProcessRegistry
+    clients: list[httpx.AsyncClient] = field(default_factory=list)
 
     async def close(self) -> None:
         await self.processes.shutdown()
         self.shell.close()
+        for client in self.clients:
+            await client.aclose()
 
 
 def protected_dirs(settings: Settings) -> list[Path]:
@@ -75,10 +83,30 @@ def output_filters(redactor: Redactor) -> list[OutputFilter]:
     return [redact, sanitize]
 
 
+def web_providers(settings: Settings, http: httpx.AsyncClient) -> tuple[SearchProvider | None, ExtractProvider]:
+    set_allow_private_urls(settings.allow_private_urls)
+    native = NativeExtractor()
+    if key := settings.secrets.get("TAVILY_API_KEY"):
+        tavily = Tavily(key, http)
+        return tavily, tavily
+    if key := settings.secrets.get("BRAVE_SEARCH_API_KEY"):
+        return Brave(key, http), native
+    if settings.searxng_url:
+        return SearXNG(settings.searxng_url, http), native
+    return None, native
+
+
 def build_core_tools(settings: Settings, clock: Clock, *, on_process_exit: Callable[[BackgroundProcess], None] | None = None) -> CoreTools:
     shell = ShellSession(settings.home / "cache" / "shell", secret_names=settings.secrets.keys())
     processes = ProcessRegistry(settings.home / "processes", now=clock.now, on_exit=on_process_exit)
     guards = [hardline_guard(default_hardline(protected_dirs(settings)))]
-    tools = [*terminal_tools(shell, processes, guards), *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings)))]
+    http = httpx.AsyncClient(timeout=60)
+    search, extract = web_providers(settings, http)
+    tools = [
+        *terminal_tools(shell, processes, guards),
+        *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings))),
+        *web_tools(search, extract, secrets=settings.secrets.values),
+    ]
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())))
-    return CoreTools(registry=registry, shell=shell, processes=processes)
+    clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else [])
+    return CoreTools(registry=registry, shell=shell, processes=processes, clients=clients)
