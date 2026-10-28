@@ -10,8 +10,10 @@ from niya.agent.prompts import build_system_prompt, load_persona
 from niya.clock import Clock
 from niya.config import Settings
 from niya.db import Database
+from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
 from niya.tools.processes import BackgroundProcess, ProcessRegistry
+from niya.tools.protected_paths import ProtectedPaths
 from niya.tools.registry import ToolRegistry
 from niya.tools.shell import ShellSession
 from niya.tools.terminal import hardline_guard, terminal_tools
@@ -53,11 +55,17 @@ class CoreTools:
 
 
 def protected_dirs(settings: Settings) -> list[Path]:
+    """Directories the terminal may not delete; the file tools additionally leave data and config alone."""
     return [settings.home, Path("/etc/niya"), CODE_DIR]
+
+
+def data_dirs(settings: Settings) -> list[Path]:
+    return [settings.home, Path("/etc/niya")]
 
 
 def build_core_tools(settings: Settings, clock: Clock, *, on_process_exit: Callable[[BackgroundProcess], None] | None = None) -> CoreTools:
     shell = ShellSession(settings.home / "cache" / "shell", secret_names=settings.secrets.keys())
     processes = ProcessRegistry(settings.home / "processes", now=clock.now, on_exit=on_process_exit)
     guards = [hardline_guard(default_hardline(protected_dirs(settings)))]
-    return CoreTools(registry=ToolRegistry(terminal_tools(shell, processes, guards)), shell=shell, processes=processes)
+    tools = [*terminal_tools(shell, processes, guards), *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings)))]
+    return CoreTools(registry=ToolRegistry(tools), shell=shell, processes=processes)
