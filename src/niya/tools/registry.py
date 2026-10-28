@@ -72,10 +72,18 @@ def truncate(text: str, limit: int) -> str:
 
 
 class ToolRegistry:
-    def __init__(self, tools: Iterable[Tool] = (), *, output_filters: Sequence[OutputFilter] = ()) -> None:
+    def __init__(
+        self,
+        tools: Iterable[Tool] = (),
+        *,
+        output_filters: Sequence[OutputFilter] = (),
+        on_outcome: Callable[[ToolContext, "ToolOutcome"], None] | None = None,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
         self._schemas: list[dict[str, Any]] | None = None
         self.output_filters = list(output_filters)
+        # Called as soon as each result exists, so e.g. taint from a web read applies to the very next call.
+        self.on_outcome = on_outcome
         for tool in tools:
             self.register(tool)
 
@@ -92,7 +100,7 @@ class ToolRegistry:
         return sorted(self._tools)
 
     def subset(self, names: Iterable[str]) -> "ToolRegistry":
-        return ToolRegistry((self._tools[n] for n in names if n in self._tools), output_filters=self.output_filters)
+        return ToolRegistry((self._tools[n] for n in names if n in self._tools), output_filters=self.output_filters, on_outcome=self.on_outcome)
 
     def schemas(self) -> list[dict[str, Any]]:
         # Sorted and cached so the tools block stays byte-identical for prefix caching.
@@ -108,11 +116,15 @@ class ToolRegistry:
                 j = i
                 while j < len(calls) and self._is_parallel_safe(calls[j]):
                     j += 1
-                results.extend(await asyncio.gather(*(self._run(call, ctx) for call in calls[i:j])))
+                batch = await asyncio.gather(*(self._run(call, ctx) for call in calls[i:j]))
                 i = j
             else:
-                results.append(await self._run(calls[i], ctx))
+                batch = [await self._run(calls[i], ctx)]
                 i += 1
+            if self.on_outcome:
+                for outcome in batch:
+                    self.on_outcome(ctx, outcome)
+            results.extend(batch)
         return results
 
     def _is_parallel_safe(self, call: ToolCall) -> bool:

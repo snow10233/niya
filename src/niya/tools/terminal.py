@@ -9,9 +9,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from niya.tools.egress import EgressGate
 from niya.tools.hardline import Hardline
 from niya.tools.processes import ProcessRegistry
-from niya.tools.registry import Tool, ToolContext, ToolError
+from niya.tools.registry import Tool, ToolContext, ToolError, ToolText
 from niya.tools.shell import ShellSession
 
 DEFAULT_TIMEOUT_S = 180
@@ -89,6 +90,13 @@ def hardline_guard(hardline: Hardline) -> CommandGuard:
     return guard
 
 
+def egress_guard(gate: EgressGate, cwd: Callable[[], str]) -> CommandGuard:
+    async def guard(command: str, ctx: ToolContext) -> str | None:
+        return await gate.check(command, session_id=ctx.session_id, turn_id=ctx.turn_id, cwd=cwd())
+
+    return guard
+
+
 def _workdir(value: Any) -> str | None:
     if value in (None, ""):
         return None
@@ -100,8 +108,14 @@ def _workdir(value: Any) -> str | None:
     return str(path)
 
 
-def terminal_tools(shell: ShellSession, processes: ProcessRegistry, guards: Sequence[CommandGuard]) -> list[Tool]:
-    async def terminal(args: dict[str, Any], ctx: ToolContext) -> str:
+def terminal_tools(
+    shell: ShellSession,
+    processes: ProcessRegistry,
+    guards: Sequence[CommandGuard],
+    *,
+    is_fetch: Callable[[str], bool] = lambda command: False,
+) -> list[Tool]:
+    async def terminal(args: dict[str, Any], ctx: ToolContext) -> str | ToolText:
         command = str(args.get("command") or "").strip()
         if not command:
             raise ToolError("command 不能是空的。")
@@ -129,7 +143,9 @@ def terminal_tools(shell: ShellSession, processes: ProcessRegistry, guards: Sequ
             lines.append(f"[exit {result.exit_code}{'：' + note if note else ''}]")
         if workdir is None and shell.cwd != before:
             lines.append(f"[目前目錄：{shell.cwd}]")
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        # Output of curl/wget-style fetches is web content: mark it so it is wrapped and taints the session.
+        return ToolText(text, external=True, source=f"terminal:{command[:60]}") if is_fetch(command) else text
 
     async def process(args: dict[str, Any], ctx: ToolContext) -> str:
         action = args.get("action")

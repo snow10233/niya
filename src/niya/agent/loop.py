@@ -1,6 +1,6 @@
 import asyncio
 import secrets
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -52,6 +52,7 @@ class Agent:
         conversation: Conversation,
         clock: Clock,
         max_iterations: int = 40,
+        on_turn_end: Callable[[str], None] | None = None,
     ) -> None:
         if not model:
             raise ValueError("請先設定模型（niya.toml 的 agent.model 或環境變數 NIYA_MODEL）。")
@@ -61,6 +62,7 @@ class Agent:
         self.conversation = conversation
         self.clock = clock
         self.max_iterations = max_iterations
+        self.on_turn_end = on_turn_end
         self.last_prompt_tokens = 0
 
     async def run_turn(self, items: Sequence[InboundItem]) -> TurnResult:
@@ -91,6 +93,9 @@ class Agent:
             conv.close_dangling_tool_calls(turn_id, "[已中斷]", ts=self.clock.now())
             conv.finish_turn(turn_id, ts=self.clock.now())
             raise
+        finally:
+            if self.on_turn_end:
+                self.on_turn_end(conv.session_id)
 
     async def _chat(self, schemas: list[dict[str, Any]] | None, tool_choice: str | None = None) -> ChatResult:
         result = await self.llm.chat(
