@@ -23,6 +23,8 @@ class Settings:
     max_iterations: int = 40
     max_context_tokens: int = 200_000
     persona_path: Path | None = None
+    searxng_url: str = ""
+    allow_private_urls: bool = False
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
@@ -60,6 +62,7 @@ def load_settings(
     data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path else {}
     agent = data.get("agent", {})
     paths = data.get("paths", {})
+    web = data.get("web", {})
 
     home = Path(env["NIYA_HOME"]) if env.get("NIYA_HOME") else Path(paths["home"]) if paths.get("home") else default_home(env)
     timezone = env.get("NIYA_TIMEZONE") or agent.get("timezone", "Asia/Taipei")
@@ -82,5 +85,7 @@ def load_settings(
         max_iterations=int(agent.get("max_iterations", 40)),
         max_context_tokens=int(agent.get("max_context_tokens", 200_000)),
         persona_path=Path(persona) if persona else None,
+        searxng_url=env.get("SEARXNG_URL") or web.get("searxng_url", ""),
+        allow_private_urls=bool(web.get("allow_private_urls", False)),
         secrets=secrets,
     )
