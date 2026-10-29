@@ -13,6 +13,7 @@ SECRET_ENV = (
     "DISCORD_TOKEN",
     "TAVILY_API_KEY",
     "BRAVE_SEARCH_API_KEY",
+    "DEEPSEEK_API_KEY",
 )
 SYSTEM_CONFIG = Path("/etc/niya/niya.toml")
 PROVIDERS = ("claude", "openrouter")
@@ -76,6 +77,7 @@ class Settings:
     embedding_model: str = "perplexity/pplx-embed-v1-4b"
     embedding_dimensions: int = 1024
     sleep_model: str = ""
+    sleep_effort: str = ""
     sleep_budget_usd: float = 1.0
     mcp_servers: tuple[McpServer, ...] = ()
     discord_owner_id: int = 0
@@ -142,8 +144,10 @@ def load_settings(
     if provider and provider not in PROVIDERS:
         raise ValueError(f"未知的 provider：{provider}（可用：{'、'.join(PROVIDERS)}）")
     effort = agent.get("effort", "")
-    if effort and effort not in EFFORTS:
-        raise ValueError(f"未知的 effort：{effort}（可用：{'、'.join(EFFORTS)}）")
+    sleep_effort = env.get("NIYA_SLEEP_EFFORT") or sleep.get("effort", "")
+    for level in (effort, sleep_effort):
+        if level and level not in EFFORTS:
+            raise ValueError(f"未知的 effort：{level}（可用：{'、'.join(EFFORTS)}）")
 
     mcp_servers = _mcp_servers(data.get("mcp", {}))
     # Tokens handed to MCP servers get the same care as niya's own keys: out of the environment, redacted everywhere.
@@ -172,6 +176,7 @@ def load_settings(
         embedding_model=memory.get("embedding_model", "perplexity/pplx-embed-v1-4b"),
         embedding_dimensions=int(memory.get("embedding_dimensions", 1024)),
         sleep_model=env.get("NIYA_SLEEP_MODEL") or sleep.get("model", ""),
+        sleep_effort=sleep_effort,
         sleep_budget_usd=float(sleep.get("budget_usd", 1.0)),
         mcp_servers=mcp_servers,
         discord_owner_id=int(env.get("NIYA_DISCORD_OWNER_ID") or discord.get("owner_id") or 0),

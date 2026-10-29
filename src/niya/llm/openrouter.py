@@ -122,9 +122,13 @@ class OpenRouterClient:
         max_retries: int = 4,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         timeout: float = 180.0,
+        name: str = "OpenRouter",
+        key_name: str = "OPENROUTER_API_KEY",
     ) -> None:
         if not api_key:
-            raise ValueError("請先設定 OPENROUTER_API_KEY。")
+            raise ValueError(f"請先設定 {key_name}。")
+        # Any OpenAI-compatible endpoint works (DeepSeek's own API does); `name` only shows in errors.
+        self.name = name
         self.base_url = base_url.rstrip("/")
         self.http = http or httpx.AsyncClient(timeout=timeout)
         self.recorder = recorder
@@ -143,10 +147,13 @@ class OpenRouterClient:
         task: str = "chat",
         max_tokens: int | None = None,
         reasoning: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> ChatResult:
         body: dict[str, Any] = {"model": model, "messages": apply_cache_control(model, messages), "usage": {"include": True}}
         if reasoning:
             body["reasoning"] = reasoning
+        if extra:
+            body.update(extra)
         if tools:
             body["tools"] = list(tools)
             body["parallel_tool_calls"] = True
@@ -157,7 +164,7 @@ class OpenRouterClient:
         data = await self._post("/chat/completions", body, task=task, model=model)
         choices = data.get("choices") or []
         if not choices:
-            raise LLMError("OpenRouter 沒有回傳任何 choices。", retryable=True)
+            raise LLMError(f"{self.name} 沒有回傳任何 choices。", retryable=True)
         choice = choices[0]
         message = choice.get("message") or {}
         content = message.get("content")
@@ -200,7 +207,7 @@ class OpenRouterClient:
             try:
                 response = await self.http.post(url, json=body, headers=self._headers)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
-                error = LLMError(f"連線 OpenRouter 失敗：{type(exc).__name__}", retryable=True)
+                error = LLMError(f"連線 {self.name} 失敗：{type(exc).__name__}", retryable=True)
             else:
                 error = self._check(response)
                 if error is None:
@@ -214,16 +221,15 @@ class OpenRouterClient:
             await self.sleep(delay)
         raise AssertionError("unreachable")
 
-    @staticmethod
-    def _check(response: httpx.Response) -> LLMError | None:
+    def _check(self, response: httpx.Response) -> LLMError | None:
         if response.status_code in RETRY_STATUS:
-            return LLMError(f"OpenRouter 暫時無法使用（HTTP {response.status_code}）", retryable=True)
+            return LLMError(f"{self.name} 暫時無法使用（HTTP {response.status_code}）", retryable=True)
         if response.status_code >= 400:
-            return LLMError(f"OpenRouter 回應 HTTP {response.status_code}：{response.text[:300]}")
+            return LLMError(f"{self.name} 回應 HTTP {response.status_code}：{response.text[:300]}")
         try:
             data = response.json()
         except ValueError:
-            return LLMError("OpenRouter 回傳的不是 JSON。", retryable=True)
+            return LLMError(f"{self.name} 回傳的不是 JSON。", retryable=True)
         error = data.get("error") if isinstance(data, dict) else None
         if error is None:
             choices = data.get("choices") or []
@@ -232,7 +238,7 @@ class OpenRouterClient:
             code = error.get("code") if isinstance(error, dict) else None
             message = error.get("message") if isinstance(error, dict) else str(error)
             retryable = isinstance(code, int) and code in RETRY_STATUS
-            return LLMError(f"OpenRouter 回傳錯誤：{message}", retryable=retryable)
+            return LLMError(f"{self.name} 回傳錯誤：{message}", retryable=retryable)
         return None
 
     def _record(self, task: str, model: str, usage: Usage, started: float, *, ok: bool, error: str | None = None) -> None:

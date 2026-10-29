@@ -72,6 +72,95 @@ def slot_id(kind: str, at: datetime) -> str:
     return f"{kind}@{at:%Y-%m-%dT%H:%M}"
 
 
+def set_stage(db: Database, run_id: int, stage: str) -> None:
+    db.execute("UPDATE sleep_runs SET stage = ? WHERE id = ?", (stage, run_id))
+
+
+def spent(db: Database, since: float) -> float:
+    row = db.one("SELECT SUM(cost_usd) AS usd FROM llm_calls WHERE ts >= ? AND task <> 'chat'", (since,))
+    return row["usd"] or 0.0
+
+
+async def consolidate(
+    db: Database,
+    engine: MemoryEngine,
+    completer: Completer,
+    *,
+    run_id: int,
+    kind: str,
+    stats: RunStats,
+    started: float,
+    budget_usd: float,
+    skills: SkillStore | None = None,
+    parallel: int = 1,
+) -> None:
+    """The memory work of one sleep, from NREM to the dream; the caller decides what happens around it.
+
+    `parallel` > 1 consolidates several segments at once (a replay of a long history does). Each segment still
+    writes in one go, and duplicates are checked at write time, so they cannot be learned twice.
+    """
+    stats.vectors = await backfill_vectors(engine)
+    nrem = Nrem(db, engine, completer)
+    gate = asyncio.Semaphore(parallel)
+
+    async def one(segment) -> None:
+        async with gate:
+            if engine.clock.now() - started > MAX_DURATION[kind]:
+                return
+            try:
+                result = await nrem.consolidate(segment, run_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("NREM failed on segment %s", segment["id"])
+                stats.failed += 1
+                return
+        stats.segments += 1
+        stats.events += result.events
+        stats.memories += result.memories
+        stats.reencounters += result.reencounters
+        stats.used += result.used
+        stats.labile += result.labile
+        stats.titles += result.titles
+        stats.new_memories += result.new_memories
+        stats.dropped += result.dropped
+        stats.intentions += result.new_intentions
+
+    await asyncio.gather(*(one(segment) for segment in nrem.pending_segments()))
+    day_start = last_night_wake(engine)
+
+    def budget_left() -> bool:
+        # NREM always finishes (clearing the context depends on it); summaries and REM stop at the budget.
+        left = spent(db, started) < budget_usd
+        stats.over_budget |= not left
+        return left
+
+    if kind == "night":
+        set_stage(db, run_id, "summaries")
+        if budget_left():
+            stats.summary = await day_summary(engine, completer, since=day_start) is not None
+        if budget_left():
+            stats.long_summaries = len(await period_summaries(engine, completer))
+    set_stage(db, run_id, "prune")
+    stats.archived = engine.prune()
+    if skills is not None:
+        stats.skills_staled, stats.skills_archived = skills.lifecycle()
+    if kind == "night" and budget_left():
+        set_stage(db, run_id, "rem")
+        rem_stats = await rem(engine, completer, budget_left=budget_left, skills=skills)
+        stats.linked, stats.insights, stats.proposals = rem_stats.linked, rem_stats.insights, rem_stats.proposals
+    set_stage(db, run_id, "wake")
+    if kind == "night":
+        # The dream looks back over the whole day, naps included.
+        day = db.query(
+            "SELECT kind, content FROM memories WHERE origin IN ('nrem', 'remember') AND created_at >= ? AND kind <> 'summary' ORDER BY id",
+            (day_start,),
+        )
+        titles = [r["content"].split("：")[0] for r in day if r["kind"] == "event"]
+        learned = [r["content"] for r in day if r["kind"] != "event"] + [f"（想到的規律）{i}" for i in stats.insights]
+        await dream(completer, run_id=run_id, titles=titles, memories=learned, archived=stats.archived, db=db, now=engine.clock.now())
+
+
 class SleepOrchestrator:
     def __init__(
         self,
@@ -233,80 +322,25 @@ class SleepOrchestrator:
 
     # --- one sleep -----------------------------------------------------------------------------------
 
-    def _stage(self, run_id: int, stage: str) -> None:
-        self.db.execute("UPDATE sleep_runs SET stage = ? WHERE id = ?", (stage, run_id))
-
     async def _sleep(self, run_id: int, kind: str, reason: str) -> None:
         stats = RunStats()
         started = self.clock.now()
         try:
             async with self.brain.lock:  # waits for a running turn to finish; new turns wait for us
-                self._stage(run_id, "nrem")
+                set_stage(self.db, run_id, "nrem")
                 session_id = self.current_session()
                 close_session_segments(self.db, session_id, reason="sleep")
                 close_idle_segments(self.db, now=self.clock.now())
                 if kind == "night":
                     self._backup()
-                stats.vectors = await backfill_vectors(self.engine)
-                completer = self.completer()
-                nrem = Nrem(self.db, self.engine, completer)
-                for segment in nrem.pending_segments():
-                    if self.clock.now() - started > MAX_DURATION[kind]:
-                        break
-                    try:
-                        result = await nrem.consolidate(segment, run_id)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        log.exception("NREM failed on segment %s", segment["id"])
-                        stats.failed += 1
-                        continue
-                    stats.segments += 1
-                    stats.events += result.events
-                    stats.memories += result.memories
-                    stats.reencounters += result.reencounters
-                    stats.used += result.used
-                    stats.labile += result.labile
-                    stats.titles += result.titles
-                    stats.new_memories += result.new_memories
-                    stats.dropped += result.dropped
-                    stats.intentions += result.new_intentions
-                day_start = last_night_wake(self.engine)
-
-                def budget_left() -> bool:
-                    # NREM always finishes (clearing the context depends on it); summaries and REM stop at the budget.
-                    left = self._spent(started) < self.budget_usd
-                    stats.over_budget |= not left
-                    return left
-
-                if kind == "night":
-                    self._stage(run_id, "summaries")
-                    if budget_left():
-                        stats.summary = await day_summary(self.engine, completer, since=day_start) is not None
-                    if budget_left():
-                        stats.long_summaries = len(await period_summaries(self.engine, completer))
-                self._stage(run_id, "prune")
-                stats.archived = self.engine.prune()
-                if self.skills is not None:
-                    stats.skills_staled, stats.skills_archived = self.skills.lifecycle()
-                if kind == "night" and budget_left():
-                    self._stage(run_id, "rem")
-                    rem_stats = await rem(self.engine, completer, budget_left=budget_left, skills=self.skills)
-                    stats.linked, stats.insights, stats.proposals = rem_stats.linked, rem_stats.insights, rem_stats.proposals
+                await consolidate(
+                    self.db, self.engine, self.completer(), run_id=run_id, kind=kind, stats=stats, started=started,
+                    budget_usd=self.budget_usd, skills=self.skills,
+                )
                 remaining = self.db.one(
                     "SELECT COUNT(*) AS n FROM segments WHERE session_id = ? AND status <> 'consolidated'", (session_id,)
                 )["n"]
                 stats.finished = remaining == 0
-                self._stage(run_id, "wake")
-                if kind == "night":
-                    # The dream looks back over the whole day, naps included.
-                    day = self.db.query(
-                        "SELECT kind, content FROM memories WHERE origin IN ('nrem', 'remember') AND created_at >= ? AND kind <> 'summary' ORDER BY id",
-                        (day_start,),
-                    )
-                    titles = [r["content"].split("：")[0] for r in day if r["kind"] == "event"]
-                    learned = [r["content"] for r in day if r["kind"] != "event"] + [f"（想到的規律）{i}" for i in stats.insights]
-                    await dream(completer, run_id=run_id, titles=titles, memories=learned, archived=stats.archived, db=self.db, now=self.clock.now())
                 self._finish(run_id, "done", stats)
                 if stats.finished:
                     self._clear_resume()
@@ -324,15 +358,11 @@ class SleepOrchestrator:
             self._finish(run_id, "failed", stats)
             self._set_resume(kind, "unfinished")
 
-    def _spent(self, since: float) -> float:
-        row = self.db.one("SELECT SUM(cost_usd) AS usd FROM llm_calls WHERE ts >= ? AND task <> 'chat'", (since,))
-        return row["usd"] or 0.0
-
     def _finish(self, run_id: int, status: str, stats: RunStats) -> None:
         started = self.db.one("SELECT started_at FROM sleep_runs WHERE id = ?", (run_id,))["started_at"]
         self.db.execute(
             "UPDATE sleep_runs SET status = ?, ended_at = ?, stats = ?, cost_usd = ? WHERE id = ?",
-            (status, self.clock.now(), json.dumps(asdict(stats), ensure_ascii=False), self._spent(started), run_id),
+            (status, self.clock.now(), json.dumps(asdict(stats), ensure_ascii=False), spent(self.db, started), run_id),
         )
 
     def _wake_line(self, kind: str, reason: str, stats: RunStats) -> str:

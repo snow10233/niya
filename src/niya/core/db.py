@@ -313,6 +313,11 @@ MIGRATIONS: list[str] = [
       detail TEXT
     );
     """,
+    """
+    -- History brought over from another agent (e.g. 'hermes:<its session id>'); replayed through sleep like a lived day.
+    ALTER TABLE sessions ADD COLUMN imported_from TEXT;
+    CREATE INDEX idx_turns_started ON turns(started_at);
+    """,
 ]
 
 

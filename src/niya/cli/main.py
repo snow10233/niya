@@ -163,6 +163,20 @@ def main(argv: list[str] | None = None) -> int:
     listing.add_argument("--all", action="store_true", help="連封存和被取代的也列出")
     show = memory_sub.add_parser("show", help="看一條記憶的細節")
     show.add_argument("id", type=int)
+    hermes = sub.add_parser("hermes", help="從 Hermes 搬過來：對話、筆記、人格")
+    hermes_sub = hermes.add_subparsers(dest="hermes_command", required=True)
+    hermes_import = hermes_sub.add_parser("import", help="匯入 Hermes 的對話（只寫原始紀錄；可以重複匯入較新的副本）")
+    hermes_import.add_argument("source", type=Path, help="Hermes 資料夾的副本（裡面有 state.db）")
+    hermes_replay = hermes_sub.add_parser("replay", help="照時間回放匯入的對話：每回合自動回想、每天 03:00 和 13:00 睡覺整理")
+    hermes_replay.add_argument("--until", metavar="'YYYY-MM-DD HH:MM'", help="只回放到這個時間（試跑用）；可以接著再跑")
+    hermes_replay.add_argument("--parallel", type=int, default=4, help="每次睡眠同時整理幾個片段（預設 4）")
+    hermes_notes = hermes_sub.add_parser("notes", help="把 USER.md／MEMORY.md 拆成單條並分類，產生審核清單和人格草稿")
+    hermes_notes.add_argument("source", type=Path, help="Hermes 資料夾的副本（裡面有 memories/ 和 state.db）")
+    hermes_notes.add_argument("--out", type=Path, help="審核清單的位置，預設 $NIYA_HOME/hermes-notes.md")
+    hermes_apply = hermes_sub.add_parser("apply", help="匯入審核過的筆記，並寫出人格設定")
+    hermes_apply.add_argument("review", type=Path, help="改好的審核清單")
+    hermes_apply.add_argument("--persona-draft", type=Path, help="人格草稿，預設和審核清單同一個資料夾的 persona.hermes.md")
+    hermes_apply.add_argument("--persona", type=Path, help="人格設定要寫到哪裡，預設設定檔的 persona 或 $NIYA_HOME/persona.md")
     args = parser.parse_args(argv)
 
     try:
@@ -195,6 +209,14 @@ def main(argv: list[str] | None = None) -> int:
         return run_effort_command(settings, args.level)
     if args.command == "memory":
         return run_memory_command(settings, args)
+    if args.command == "hermes":
+        from niya.cli.hermes import run_hermes_command
+
+        try:
+            return asyncio.run(run_hermes_command(settings, args))
+        except (ValueError, OSError) as exc:
+            print(f"失敗：{exc}", file=sys.stderr)
+            return 2
     if args.command in ("login", "logout"):
         from niya.llm.claude_cli import run_cli
 

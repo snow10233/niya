@@ -43,8 +43,11 @@ embedding_dimensions = 1024
 
 [sleep]
 # 睡覺整理記憶用的模型，格式和 niya model 一樣（例如 claude:sonnet、openrouter:anthropic/claude-haiku-5.5）。
+# 也可以用 DeepSeek 官方 API：deepseek:deepseek-flash（金鑰放 DEEPSEEK_API_KEY，只能用在睡眠整理）。
 # 空白就用目前對話的模型。
 model = ""
+# 睡覺整理時的思考強度，格式和 [agent] effort 一樣；空白用模型預設。
+effort = ""
 # 每次睡眠花在摘要和 REM 的上限（美元，依 API 價格估算；用 Claude 訂閱時是等值估算）。
 # 對話整理（NREM）一定會做完，不受這個限制。
 budget_usd = 1.0

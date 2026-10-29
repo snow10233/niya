@@ -11,7 +11,7 @@ from niya.app.runtime import build_agent, build_core_tools, needs_new_session
 from niya.core.clock import FakeClock
 from niya.core.config import Settings, load_settings
 from niya.core.db import Database
-from niya.llm.choice import ModelChoice, clear_choice, configured_choice, current_choice, parse_choice, save_choice
+from niya.llm.choice import SLEEP_PROVIDERS, ModelChoice, clear_choice, configured_choice, current_choice, parse_choice, save_choice
 
 
 class ParseTests(unittest.TestCase):
@@ -32,6 +32,11 @@ class ParseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_choice("openrouter")
 
+    def test_deepseek_is_for_sleep_only(self):
+        self.assertEqual(parse_choice("deepseek:deepseek-flash", SLEEP_PROVIDERS), ModelChoice("deepseek", "deepseek-flash"))
+        self.assertEqual(parse_choice("deepseek", SLEEP_PROVIDERS), ModelChoice("deepseek", "deepseek-flash"))
+        self.assertEqual(parse_choice("deepseek:deepseek-flash"), ModelChoice("claude", "deepseek:deepseek-flash"))
+
     def test_configured_defaults(self):
         home = Path("/tmp/x")
         self.assertEqual(configured_choice(Settings(home=home)), ModelChoice("claude", "opus"))
@@ -50,6 +55,12 @@ class ParseTests(unittest.TestCase):
             relative = load_settings(config, environ={"NIYA_HOME": ".niya-test"})
             self.assertEqual(relative.home, Path.cwd() / ".niya-test")
             config.write_text('[agent]\neffort = "turbo"\n')
+            with self.assertRaises(ValueError):
+                load_settings(config, environ={"NIYA_HOME": tmp})
+            config.write_text('[sleep]\nmodel = "deepseek:deepseek-flash"\neffort = "max"\n')
+            settings = load_settings(config, environ={"NIYA_HOME": tmp, "DEEPSEEK_API_KEY": "sk-deep-123"})
+            self.assertEqual((settings.sleep_model, settings.sleep_effort, settings.secrets), ("deepseek:deepseek-flash", "max", {"DEEPSEEK_API_KEY": "sk-deep-123"}))
+            config.write_text('[sleep]\neffort = "turbo"\n')
             with self.assertRaises(ValueError):
                 load_settings(config, environ={"NIYA_HOME": tmp})
 
