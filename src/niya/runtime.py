@@ -16,7 +16,7 @@ from niya.clock import Clock
 from niya.config import Settings
 from niya.db import Database
 from niya.llm import OpenRouterClient, db_recorder
-from niya.model_choice import CLAUDE, ModelChoice
+from niya.model_choice import CLAUDE, ModelChoice, current_effort
 from niya.redact import Redactor
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
@@ -136,6 +136,7 @@ AnyAgent = Agent | ClaudeCodeAgent
 
 
 def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools, conversation: Conversation, choice: ModelChoice) -> AnyAgent:
+    effort = current_effort(db, settings)[0] or None
     if choice.provider == CLAUDE:
         return ClaudeCodeAgent(
             model=choice.model,
@@ -145,7 +146,7 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
             config_dir=settings.claude_config_dir,
             cwd=settings.home,
             max_iterations=settings.max_iterations,
-            effort=settings.effort or None,
+            effort=effort,
             secrets=settings.secrets,
             on_turn_end=tools.egress.end_turn,
             recorder=db_recorder(db, clock),
@@ -157,6 +158,7 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
         conversation=conversation,
         clock=clock,
         max_iterations=settings.max_iterations,
+        effort=effort,
         on_turn_end=tools.egress.end_turn,
     )
 

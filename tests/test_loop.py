@@ -103,6 +103,15 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         gap = self.db.query("SELECT gap_s FROM turns ORDER BY started_at")[1]["gap_s"]
         self.assertEqual(gap, 3600)
 
+    async def test_effort_becomes_reasoning_parameter(self):
+        llm = FakeLLM(reply("想好了"), reply("再想"))
+        agent = self.agent(llm)
+        await agent.run_turn(self.owner("想一下"))
+        self.assertIsNone(llm.requests[0]["reasoning"])
+        await agent.set_effort("high")
+        await agent.run_turn(self.owner("再想"))
+        self.assertEqual(llm.requests[1]["reasoning"], {"effort": "high"})
+
     def test_requires_model(self):
         with self.assertRaises(ValueError):
             Agent(llm=FakeLLM(), model="", tools=ToolRegistry(), conversation=self.conv, clock=self.clock)

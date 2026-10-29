@@ -27,7 +27,12 @@ uv run --env-file .env niya model        # 查看、切換模型
   - 也可以用 `niya login --token` 產生長效 token，存成 `CLAUDE_CODE_OAUTH_TOKEN`。
 - **切換模型**：
   - `niya model sonnet`，或在 REPL 裡打 `/model sonnet`、`/model openrouter:<模型 ID>`、`/model reset`（改回設定檔）。
+  - 找 OpenRouter 的模型：`/model search <關鍵字>`（例如 `/model search gemini flash`）只列出支援工具呼叫的模型和價格，再用 `/model <編號>` 切換。直接打的 ID 也會先對照 OpenRouter 的清單，打錯會提醒。
   - 同一個 provider 換模型會直接套用；換 provider 會開新 session，舊的紀錄留在資料庫。
+- **思考強度**：`/effort high`（或 `niya effort high`），`/effort reset` 改回設定檔。
+  - Claude：`low`、`medium`、`high`、`xhigh`、`max`。Claude 不能完全不思考，設 `none`／`minimal` 會當成 `low`。
+  - OpenRouter：另外還有 `none`（不思考）和 `minimal`，送出時是 `reasoning.effort`。
+  - Claude 模式改強度時會重新連上 Claude Code，對話照樣接續。
 - **為什麼不像 Hermes 那樣直接拿 token 呼叫 API**：Anthropic 規定訂閱登入只能用在官方的 Claude Code 和 Anthropic 自己的 App，第三方程式不能取出或代管登入憑證，從 2026 年 1 月起也會主動封鎖。所以 niya 改成在背後執行官方 Claude Code。
 - **額度**：訂閱有 5 小時和每週的用量上限，用完時 niya 會告訴你幾點重置。設了 `ANTHROPIC_API_KEY` 就改走 API 計費。
 - **Claude 模式跟 OpenRouter 模式的差別**：
@@ -56,7 +61,7 @@ uv run --env-file .env niya doctor
 uv run --env-file .env niya repl
 ```
 
-- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/quit` 離開。
+- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/effort` 調整思考強度，`/quit` 離開。
 - 資料存在 `NIYA_HOME`（`.env.example` 預設是專案目錄下的 `.niya/`）的 `niya.db`。VPS 上預設是 `/var/lib/niya`。
 - 設定檔可以用 `--config` 或 `NIYA_CONFIG` 指定，格式見 `niya.example.toml`。人格設定見 `persona.example.md`。
 - 密鑰只從環境變數讀，讀完就從環境中移除，不要寫進設定檔或提交到 Git。

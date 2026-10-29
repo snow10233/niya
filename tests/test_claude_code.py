@@ -262,6 +262,17 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         result = await agent.run_turn(self.owner("2"))
         self.assertEqual(result.text, "回來了")
 
+    async def test_effort_change_reconnects_and_resumes(self):
+        agent = self.agent([say("一"), done()], [say("二"), done()])
+        await agent.run_turn(self.owner("1"))
+        self.assertIsNone(self.harness.clients[0].options.effort)
+        await agent.set_effort("max")
+        self.assertTrue(self.harness.clients[0].disconnected)
+        await agent.run_turn(self.owner("2"))
+        self.assertEqual((self.harness.clients[1].options.effort, self.harness.clients[1].options.resume), ("max", SID))
+        await agent.set_effort("minimal")
+        self.assertEqual(agent.effort, "low")
+
     async def test_set_model_reaches_live_client(self):
         agent = self.agent([say("好"), done()])
         await agent.run_turn(self.owner("1"))

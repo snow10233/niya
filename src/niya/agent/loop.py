@@ -23,6 +23,7 @@ class ChatModel(Protocol):
         tool_choice: str | None = None,
         task: str = "chat",
         max_tokens: int | None = None,
+        reasoning: dict[str, Any] | None = None,
     ) -> ChatResult: ...
 
 
@@ -56,6 +57,7 @@ class Agent:
         conversation: Conversation,
         clock: Clock,
         max_iterations: int = 40,
+        effort: str | None = None,
         on_turn_end: Callable[[str], None] | None = None,
     ) -> None:
         if not model:
@@ -66,6 +68,7 @@ class Agent:
         self.conversation = conversation
         self.clock = clock
         self.max_iterations = max_iterations
+        self.effort = effort or None
         self.on_turn_end = on_turn_end
         self.last_prompt_tokens = 0
 
@@ -106,6 +109,9 @@ class Agent:
     async def set_model(self, model: str) -> None:
         self.model = model
 
+    async def set_effort(self, effort: str | None) -> None:
+        self.effort = effort or None
+
     async def aclose(self) -> None:
         close = getattr(self.llm, "aclose", None)
         if close is not None:
@@ -118,6 +124,7 @@ class Agent:
             tools=schemas,
             tool_choice=tool_choice,
             task="chat",
+            reasoning={"effort": self.effort} if self.effort else None,
         )
         self.last_prompt_tokens = result.usage.prompt_tokens
         return result
