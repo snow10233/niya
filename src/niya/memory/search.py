@@ -10,7 +10,7 @@ When that finds nothing (short terms, or a sentence whose 3-grams never occur ve
 import re
 from dataclasses import dataclass
 
-from niya.db import Database
+from niya.core.db import Database
 
 MAX_QUERY_CHARS = 200
 MAX_TERMS = 32

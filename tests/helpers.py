@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from niya.llm import ChatResult, ToolCall, Usage
+from niya.llm.openrouter import ChatResult, ToolCall, Usage
 
 TZ = ZoneInfo("Asia/Taipei")
 

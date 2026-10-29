@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-niya = "niya.__main__:main"
+niya = "niya.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]

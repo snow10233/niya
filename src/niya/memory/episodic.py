@@ -4,7 +4,7 @@ A chat segment runs until the conversation goes quiet for IDLE_GAP_S or the sess
 an alarm or a background process get a segment of their own, so they never get blended into a chat.
 """
 
-from niya.db import Database
+from niya.core.db import Database
 
 IDLE_GAP_S = 30 * 60
 OWN_SEGMENT_SOURCES = frozenset({"alarm", "process"})

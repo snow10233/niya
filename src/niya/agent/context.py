@@ -7,9 +7,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from niya.agent.render import render_history, strip_echoed_prefix
-from niya.db import Database
-from niya.inbox import InboundItem
-from niya.llm import ChatResult, ToolCall
+from niya.core.db import Database
+from niya.core.inbox import InboundItem
+from niya.llm.openrouter import ChatResult, ToolCall
 from niya.memory.episodic import assign_segment, close_session_segments, finish_segment_turn
 from niya.tools.registry import ToolOutcome
 

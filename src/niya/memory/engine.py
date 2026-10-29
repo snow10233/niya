@@ -15,8 +15,8 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from niya.clock import Clock
-from niya.db import Database
+from niya.core.clock import Clock
+from niya.core.db import Database
 from niya.memory.curve import DAY, DEFAULT, CurveParams, cue_threshold, initial_stability, r_at, recall_score, reinforce
 from niya.memory.search import match_expression, query_terms, search_messages
 from niya.memory.timefmt import exact_label, time_label

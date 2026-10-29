@@ -41,11 +41,11 @@ from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT, HARD, over
 from niya.agent.context import Conversation
 from niya.agent.loop import RecallHook, TurnResult, new_turn_id, recall_into
 from niya.agent.render import render_history
-from niya.claude_cli import claude_env
-from niya.clock import Clock
-from niya.inbox import InboundItem, turn_source
-from niya.llm import CallRecord, ChatResult, LLMError, Recorder, ToolCall, Usage
-from niya.model_choice import effort_for
+from niya.core.clock import Clock
+from niya.core.inbox import InboundItem, turn_source
+from niya.llm.choice import effort_for
+from niya.llm.claude_cli import claude_env
+from niya.llm.openrouter import CallRecord, ChatResult, LLMError, Recorder, ToolCall, Usage
 from niya.tools.registry import Tool, ToolContext, ToolOutcome, ToolRegistry
 
 log = logging.getLogger(__name__)

@@ -7,9 +7,9 @@ from typing import Any, Protocol
 
 from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, estimate_all, over
 from niya.agent.context import Conversation
-from niya.clock import Clock
-from niya.inbox import InboundItem, turn_source
-from niya.llm import ChatResult
+from niya.core.clock import Clock
+from niya.core.inbox import InboundItem, turn_source
+from niya.llm.openrouter import ChatResult
 from niya.tools.registry import ToolContext, ToolRegistry
 
 log = logging.getLogger(__name__)

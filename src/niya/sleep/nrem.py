@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from niya.agent.render import SPEAKER_LABELS, format_ts
-from niya.db import Database
+from niya.core.db import Database
 from niya.memory.engine import LIVE, Memory, MemoryEngine
 from niya.memory.vectors import store_vector
 from niya.sleep.llm import Completer, parse_json

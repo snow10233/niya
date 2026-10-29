@@ -10,7 +10,7 @@ from typing import Protocol
 
 import numpy as np
 
-from niya.db import Database
+from niya.core.db import Database
 
 ARCHIVE_BATCH = 5000
 
