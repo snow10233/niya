@@ -42,7 +42,7 @@ from niya.agent.loop import TurnResult, new_turn_id
 from niya.agent.render import render_history
 from niya.claude_cli import claude_env
 from niya.clock import Clock
-from niya.inbox import InboundItem
+from niya.inbox import InboundItem, turn_source
 from niya.llm import CallRecord, ChatResult, LLMError, Recorder, ToolCall, Usage
 from niya.model_choice import effort_for
 from niya.tools.registry import Tool, ToolContext, ToolOutcome, ToolRegistry
@@ -183,7 +183,7 @@ class ClaudeCodeAgent:
             raise ValueError("一回合至少要有一則訊息。")
         conv = self.conversation
         turn_id = new_turn_id()
-        conv.start_turn(turn_id, source=items[0].speaker, ts=self.clock.now())
+        conv.start_turn(turn_id, source=turn_source(items), ts=self.clock.now())
         start = len(conv.messages)
         conv.add_user_items(turn_id, items)
         if conv.engine is None:

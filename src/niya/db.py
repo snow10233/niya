@@ -107,6 +107,50 @@ MIGRATIONS: list[str] = [
     ALTER TABLE sessions ADD COLUMN engine TEXT;
     ALTER TABLE sessions ADD COLUMN engine_session_id TEXT;
     """,
+    """
+    -- Daytime segmentation: the units that NREM later cuts into events.
+    ALTER TABLE turns ADD COLUMN sim_prev REAL;
+    ALTER TABLE turns ADD COLUMN segment_id INTEGER;
+    CREATE TABLE segments(
+      id INTEGER PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      kind TEXT NOT NULL DEFAULT 'chat',
+      started_at REAL NOT NULL,
+      ended_at REAL,
+      status TEXT NOT NULL DEFAULT 'open',
+      closed_reason TEXT,
+      consolidated_at REAL,
+      sleep_run_id INTEGER
+    );
+    CREATE INDEX idx_segments_status ON segments(status, session_id);
+    CREATE INDEX idx_turns_segment ON turns(segment_id);
+
+    -- Full-text search over what was said (tool output is left out); trigram works for Chinese and English alike.
+    CREATE VIRTUAL TABLE messages_tri USING fts5(content, content='messages', content_rowid='id', tokenize='trigram');
+    INSERT INTO messages_tri(rowid, content) SELECT id, content FROM messages WHERE role <> 'tool' AND content IS NOT NULL;
+    CREATE TRIGGER messages_tri_ai AFTER INSERT ON messages WHEN new.role <> 'tool' AND new.content IS NOT NULL BEGIN
+      INSERT INTO messages_tri(rowid, content) VALUES (new.id, new.content);
+    END;
+    CREATE TRIGGER messages_tri_ad AFTER DELETE ON messages WHEN old.role <> 'tool' AND old.content IS NOT NULL BEGIN
+      INSERT INTO messages_tri(messages_tri, rowid, content) VALUES ('delete', old.id, old.content);
+    END;
+    CREATE TRIGGER messages_tri_au AFTER UPDATE OF content, role ON messages BEGIN
+      INSERT INTO messages_tri(messages_tri, rowid, content) SELECT 'delete', old.id, old.content WHERE old.role <> 'tool' AND old.content IS NOT NULL;
+      INSERT INTO messages_tri(rowid, content) SELECT new.id, new.content WHERE new.role <> 'tool' AND new.content IS NOT NULL;
+    END;
+
+    -- Everything that wants niya's attention waits here, so nothing is lost across restarts or sleep.
+    CREATE TABLE inbox(
+      id INTEGER PRIMARY KEY,
+      source TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL,
+      meta TEXT,
+      received_at REAL NOT NULL,
+      taken_at REAL
+    );
+    CREATE INDEX idx_inbox_pending ON inbox(taken_at, priority, received_at);
+    """,
 ]
 
 

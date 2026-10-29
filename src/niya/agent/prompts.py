@@ -47,6 +47,12 @@ def build_system_prompt(
             "依內容找用 deep_recall，依時間找用 recall_timeline，要從某條記憶往下挖就用 recall_related(ref)。"
             "ref（例如 m123）只給你自己查詢用，不要在回覆裡提到。想刻意記住的事，用 remember。"
         )
+    if "recall" in features and "memory" not in features:
+        rules.append(
+            "- 回想：目前的對話之外，你看不到以前聊過的內容。主人提到「上次」「之前」「你記得嗎」，"
+            "或你覺得應該知道卻想不起來時，先用 deep_recall 以關鍵字搜尋過去的對話，再用 recall_related(msg#id) 看前後文，不要猜。"
+            "ref（例如 msg#123）只給你自己查詢用，不要在回覆裡提到。"
+        )
     if "alarm" in features:
         rules.append("- 鬧鐘：主人提到有時間的未來計畫時，用 alarm 設提醒，並用 remember 記下來。")
     rules.append(f"- 輸出：回覆會送到{channel}。不需要回覆時，以 [SILENT] 開頭。")
