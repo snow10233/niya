@@ -188,6 +188,20 @@ journalctl -u niya -f       # 看日誌
 - systemd 設了 `TasksMax=512`、`MemoryMax=2G`，即使是 root 也跑不出 fork bomb，也不會把整台機器的記憶體吃光。
 - niya 用 `nohup` 或 `&` 啟動的程序，在 niya 重啟時會一起被關掉。所以長期執行的服務，niya 會做成 systemd unit。
 
+### 4. 更新
+
+```sh
+cd /opt/niya
+git pull
+uv sync --frozen
+# service 檔有改才需要重新複製；沒改就什麼都不會做
+cmp -s deploy/niya.service /etc/systemd/system/niya.service || { cp deploy/niya.service /etc/systemd/system/ && systemctl daemon-reload; }
+systemctl restart niya
+```
+
+- 新程式要重啟才會生效。重啟前 niya 如果正在睡覺整理，下次醒著閒下來時會續睡，已整理完的片段不會重做。
+- service 檔用複製的，不用 `systemctl link` 連到 repo：niya 能改 `/opt/niya`，用複製的話，repo 裡的 service 檔被改動，也不會在你不知情時改掉 systemd 的設定（例如記憶體上限）。
+
 ## 送給模型的格式
 
 ```
