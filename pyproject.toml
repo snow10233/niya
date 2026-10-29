@@ -5,6 +5,7 @@ description = "會睡覺、會遺忘、有時間感的長期運行 agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "claude-agent-sdk>=0.2.174,<0.3",
     "httpx>=0.28,<1",
 ]
 

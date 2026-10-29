@@ -102,6 +102,11 @@ MIGRATIONS: list[str] = [
       outcome TEXT
     );
     """,
+    """
+    -- Which engine ran the session (openrouter / claude) and, for Claude Code, its own session ID to resume.
+    ALTER TABLE sessions ADD COLUMN engine TEXT;
+    ALTER TABLE sessions ADD COLUMN engine_session_id TEXT;
+    """,
 ]
 
 

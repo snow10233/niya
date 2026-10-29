@@ -7,12 +7,16 @@ import httpx
 
 import niya
 
+from niya.agent.claude_code import ClaudeCodeAgent
 from niya.agent.context import Conversation
+from niya.agent.loop import Agent
 from niya.agent.prompts import build_system_prompt, load_persona
 from niya.agent.sanitize import neutralize, wrap_untrusted
 from niya.clock import Clock
 from niya.config import Settings
 from niya.db import Database
+from niya.llm import OpenRouterClient, db_recorder
+from niya.model_choice import CLAUDE, ModelChoice
 from niya.redact import Redactor
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
@@ -126,3 +130,37 @@ def build_core_tools(
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else [])
     return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, clients=clients)
+
+
+AnyAgent = Agent | ClaudeCodeAgent
+
+
+def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools, conversation: Conversation, choice: ModelChoice) -> AnyAgent:
+    if choice.provider == CLAUDE:
+        return ClaudeCodeAgent(
+            model=choice.model,
+            tools=tools.registry,
+            conversation=conversation,
+            clock=clock,
+            config_dir=settings.claude_config_dir,
+            cwd=settings.home,
+            max_iterations=settings.max_iterations,
+            effort=settings.effort or None,
+            secrets=settings.secrets,
+            on_turn_end=tools.egress.end_turn,
+            recorder=db_recorder(db, clock),
+        )
+    return Agent(
+        llm=OpenRouterClient(settings.api_key, base_url=settings.base_url, recorder=db_recorder(db, clock)),
+        model=choice.model,
+        tools=tools.registry,
+        conversation=conversation,
+        clock=clock,
+        max_iterations=settings.max_iterations,
+        on_turn_end=tools.egress.end_turn,
+    )
+
+
+def needs_new_session(conversation: Conversation, choice: ModelChoice) -> bool:
+    """History made on one engine cannot be handed to another, so switching provider starts a new session."""
+    return conversation.engine is not None and conversation.engine != choice.provider and bool(conversation.messages)

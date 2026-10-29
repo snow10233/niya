@@ -7,18 +7,24 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 SECRET_ENV = (
     "OPENROUTER_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
     "DISCORD_TOKEN",
     "TAVILY_API_KEY",
     "BRAVE_SEARCH_API_KEY",
 )
 SYSTEM_CONFIG = Path("/etc/niya/niya.toml")
+PROVIDERS = ("claude", "openrouter")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True)
 class Settings:
     home: Path
     timezone: str = "Asia/Taipei"
+    provider: str = ""
     model: str = ""
+    effort: str = ""
     base_url: str = "https://openrouter.ai/api/v1"
     max_iterations: int = 40
     max_context_tokens: int = 200_000
@@ -40,6 +46,11 @@ class Settings:
     @property
     def api_key(self) -> str:
         return self.secrets.get("OPENROUTER_API_KEY", "")
+
+    @property
+    def claude_config_dir(self) -> Path:
+        """Claude Code keeps its login and transcripts here, apart from the owner's own ~/.claude."""
+        return self.home / "claude"
 
 
 def default_home(environ: MutableMapping[str, str]) -> Path:
@@ -74,6 +85,12 @@ def load_settings(
     except (ZoneInfoNotFoundError, ValueError):
         raise ValueError(f"無法辨識的時區：{timezone}") from None
     persona = paths.get("persona")
+    provider = env.get("NIYA_PROVIDER") or agent.get("provider", "")
+    if provider and provider not in PROVIDERS:
+        raise ValueError(f"未知的 provider：{provider}（可用：{'、'.join(PROVIDERS)}）")
+    effort = agent.get("effort", "")
+    if effort and effort not in EFFORTS:
+        raise ValueError(f"未知的 effort：{effort}（可用：{'、'.join(EFFORTS)}）")
 
     secrets = {key: value for key in SECRET_ENV if (value := env.get(key, "").strip())}
     if pop_secrets:
@@ -83,7 +100,9 @@ def load_settings(
     return Settings(
         home=home,
         timezone=timezone,
+        provider=provider,
         model=env.get("NIYA_MODEL") or agent.get("model", ""),
+        effort=effort,
         base_url=agent.get("base_url", "https://openrouter.ai/api/v1"),
         max_iterations=int(agent.get("max_iterations", 40)),
         max_context_tokens=int(agent.get("max_context_tokens", 200_000)),
