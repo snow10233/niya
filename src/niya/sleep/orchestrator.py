@@ -21,6 +21,7 @@ from niya.core.clock import Clock
 from niya.core.db import Database
 from niya.memory.engine import MemoryEngine
 from niya.memory.episodic import close_idle_segments, close_session_segments
+from niya.skills.store import SkillStore
 from niya.sleep.llm import Completer
 from niya.sleep.nrem import Nrem, backfill_vectors
 from niya.sleep.rem import rem
@@ -60,6 +61,9 @@ class RunStats:
     long_summaries: int = 0
     linked: int = 0
     insights: list[str] = field(default_factory=list)
+    proposals: list[str] = field(default_factory=list)
+    skills_staled: list[str] = field(default_factory=list)
+    skills_archived: list[str] = field(default_factory=list)
     over_budget: bool = False
     finished: bool = False
 
@@ -83,6 +87,7 @@ class SleepOrchestrator:
         notify: Say,
         backups_dir=None,
         budget_usd: float = 1.0,
+        skills: SkillStore | None = None,
     ) -> None:
         self.db = db
         self.clock = clock
@@ -95,6 +100,7 @@ class SleepOrchestrator:
         self.notify = notify
         self.backups_dir = backups_dir
         self.budget_usd = budget_usd
+        self.skills = skills
         self.task: asyncio.Task | None = None
         self.progress: str = ""
         self._wake_reason = "owner"
@@ -281,10 +287,12 @@ class SleepOrchestrator:
                         stats.long_summaries = len(await period_summaries(self.engine, completer))
                 self._stage(run_id, "prune")
                 stats.archived = self.engine.prune()
+                if self.skills is not None:
+                    stats.skills_staled, stats.skills_archived = self.skills.lifecycle()
                 if kind == "night" and budget_left():
                     self._stage(run_id, "rem")
-                    rem_stats = await rem(self.engine, completer, budget_left=budget_left)
-                    stats.linked, stats.insights = rem_stats.linked, rem_stats.insights
+                    rem_stats = await rem(self.engine, completer, budget_left=budget_left, skills=self.skills)
+                    stats.linked, stats.insights, stats.proposals = rem_stats.linked, rem_stats.insights, rem_stats.proposals
                 remaining = self.db.one(
                     "SELECT COUNT(*) AS n FROM segments WHERE session_id = ? AND status <> 'consolidated'", (session_id,)
                 )["n"]
@@ -358,3 +366,10 @@ class SleepOrchestrator:
                 lonely.append(f"m{memory.id}（{format_ts(at, self.tz)}）{memory.content}")
         if lonely:
             self.brain.inbox.put("system", "睡覺整理時發現這些計畫沒有對應的鬧鐘，判斷要不要補設：\n" + "\n".join(f"- {line}" for line in lonely))
+        if stats.proposals and self.skills is not None:
+            drafts = [f"- {name}：{skill.description}" for name in stats.proposals if (skill := self.skills.get(name))]
+            self.brain.inbox.put(
+                "system",
+                "睡覺時從重複做過的工作整理出技能草稿：\n" + "\n".join(drafts)
+                + "\n用 skill_view 看內容，合適就用 skill_manage(action=accept) 收下，不需要就 archive。這是你自己的事，不用特別告訴主人。",
+            )

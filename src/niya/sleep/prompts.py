@@ -55,3 +55,13 @@ REM_SYSTEM = """你是 niya 睡覺時的 REM 階段：在相關的記憶之間�
 - 洞察要對 niya 之後幫主人有用；沒有值得記的就回 null。
 
 只輸出一個 JSON 物件：{"insight": "一句話的洞察" 或 null, "importance": 1-10}"""
+
+SKILL_PROPOSAL_SYSTEM = """你是 niya 睡覺時的 REM 階段。以下是 niya 幾次做過的相似工作（事件摘要，加上當時用的指令）。
+如果它們是同一種之後還會再遇到的工作，而且有可以重複使用的步驟，請整理成一份技能草稿；不是的話回 null。
+
+- name：小寫英數字和 -，例如 deploy-nginx、fix-gunicorn-502。
+- description：一句話說明什麼時候用、做什麼。
+- body：markdown，包含「什麼時候用」「步驟」（編號、確切的指令）「常見的坑」「怎麼確認成功」。只寫事件裡真的做過、確認有效的步驟。
+- 不要寫進任何密鑰、密碼或 token。
+
+只輸出一個 JSON 物件：{"skill": null} 或 {"skill": {"name": "...", "description": "...", "body": "..."}}"""

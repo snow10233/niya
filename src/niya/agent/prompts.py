@@ -59,6 +59,11 @@ def build_system_prompt(
             f"- 鬧鐘：主人提到有時間的未來計畫時，自己判斷要設哪些提醒（例如前一天、出門前），用 alarm 設好{remember}。"
             "alarm: 訊息是鬧鐘響了：「提醒主人」就提醒主人；「該做的事」就去做，做完沒有需要回報的就以 [SILENT] 開頭。"
         )
+    if "skills" in features:
+        rules.append(
+            "- 技能：要做的事在「# 技能」清單裡有的話，先用 skill_view 讀出步驟再照著做（清單沒列的用 skills_list 找）。"
+            "做完一件複雜、之後還會遇到的工作，用 skill_manage 寫成技能；照技能做卻發現步驟過時，就用 patch 修正。"
+        )
     rules.append(f"- 輸出：回覆會送到{channel}。不需要回覆時，以 [SILENT] 開頭。")
 
     sections = [f"# 你是 niya\n{persona}", "# 運作方式\n" + "\n".join(rules), SAFETY_RULES.format(run_as=run_as)]

@@ -292,6 +292,27 @@ MIGRATIONS: list[str] = [
       details TEXT
     );
     """,
+    """
+    -- Procedural memory: skills fade too, by how long it has been since niya last used them.
+    CREATE TABLE skills(
+      name TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      description TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      last_used_at REAL,
+      use_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE skill_events(
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      ts REAL NOT NULL,
+      session_id TEXT,
+      detail TEXT
+    );
+    """,
 ]
 
 
