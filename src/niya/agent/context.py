@@ -127,7 +127,8 @@ class Conversation:
 
     def add_user_items(self, turn_id: str, items: Sequence[InboundItem]) -> None:
         for item in sorted(items, key=lambda i: i.ts):
-            self._insert(turn_id=turn_id, role="user", speaker=item.speaker, content=item.content, ts=item.ts)
+            images = item.meta.get("images")
+            self._insert(turn_id=turn_id, role="user", speaker=item.speaker, content=item.content, extra={"images": list(images)} if images else None, ts=item.ts)
 
     def add_system_line(self, turn_id: str, text: str, *, ts: float) -> None:
         self._insert(turn_id=turn_id, role="user", speaker="system", content=text, ts=ts)
@@ -153,6 +154,7 @@ class Conversation:
             api_content=outcome.content,
             tool_call_id=outcome.call.id,
             tool_name=outcome.call.name,
+            extra={"images": list(outcome.images)} if outcome.images else None,
             ts=ts,
         )
 

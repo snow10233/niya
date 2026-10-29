@@ -185,6 +185,31 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(long.content), 40000)
         self.assertLess(len(long.api_content), 32000)
 
+    async def test_pictures_go_in_as_content_blocks_both_ways(self):
+        from PIL import Image
+
+        picture = self.dir / "cat.png"
+        Image.new("RGB", (8, 8), (0, 0, 0)).save(picture)
+        results = []
+
+        async def look(client):
+            yield AssistantMessage(content=[ToolUseBlock(id="toolu_1", name="mcp__niya__read_file", input={"path": str(picture)})], model="m", message_id="m1", session_id=SID)
+            result = await {t.name: t for t in client.harness.agent.sdk_tools}["read_file"].handler({"path": str(picture)})
+            results.append(result)
+            yield UserMessage(content=[ToolResultBlock(tool_use_id="toolu_1", content=result["content"], is_error=False)])
+
+        agent = self.agent([look, say("是黑色的", "m2"), done()])
+        await agent.run_turn([InboundItem("owner", "這是什麼顏色", self.clock.now(), {"images": [str(picture)]})])
+        [query] = self.harness.clients[0].queries
+        [message] = [m async for m in query]
+        text, image = message["message"]["content"]
+        self.assertEqual(text, {"type": "text", "text": "[2026-10-29 (四) 10:00] user: 這是什麼顏色"})
+        self.assertEqual((image["type"], image["source"]["media_type"]), ("image", "image/png"))
+        self.assertEqual([c["type"] for c in results[0]["content"]], ["text", "image"])
+        self.assertEqual(results[0]["content"][1]["mimeType"], "image/png")
+        tool_row = next(m for m in self.conv.messages if m.role == "tool")
+        self.assertEqual(tool_row.extra, {"images": [str(picture)]})
+
     async def test_split_stream_messages_merge_into_one_row(self):
         split = [
             AssistantMessage(content=[TextBlock("我看看")], model="m", message_id="m1", session_id=SID),

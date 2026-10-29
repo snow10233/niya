@@ -1,8 +1,10 @@
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
+
+from niya.core.media import data_url
 
 WEEKDAYS = "一二三四五六日"
 SPEAKER_LABELS = {"owner": "user", "niya": "niya", "alarm": "alarm", "system": "system", "process": "process"}
@@ -36,15 +38,32 @@ def strip_echoed_prefix(text: str) -> str:
     return _ECHOED_PREFIX.sub("", text, count=1)
 
 
+def images_of(message: RenderableMessage) -> list[str]:
+    return list((message.extra or {}).get("images") or ())
+
+
+def with_images(text: str, paths: Sequence[str], load_image: Callable[[str], str | None]) -> str | list[dict[str, Any]]:
+    """Plain text, or text plus image parts when there are pictures to look at."""
+    if not paths:
+        return text
+    urls = [(path, load_image(path)) for path in paths]
+    gone = [path for path, url in urls if url is None]
+    if gone:
+        text += "\n" + "\n".join(f"（圖片已經不在了：{path}）" for path in gone)
+    return [{"type": "text", "text": text}, *({"type": "image_url", "image_url": {"url": url}} for _, url in urls if url)]
+
+
 def render_history(
     messages: Sequence[RenderableMessage],
     tz: ZoneInfo,
     recall_blocks: Mapping[str, str] | None = None,
+    load_image: Callable[[str], str | None] = data_url,
 ) -> list[dict[str, Any]]:
     """Turn stored rows into API messages.
 
-    Output depends only on stored fields, so re-rendering the same history is byte-identical and
-    appending rows never changes earlier messages; that is what keeps the provider prefix cache warm.
+    Output depends only on stored fields (and the image files they point to), so re-rendering the same
+    history is byte-identical and appending rows never changes earlier messages; that is what keeps the
+    provider prefix cache warm.
     """
     recall_blocks = recall_blocks or {}
     out: list[dict[str, Any]] = []
@@ -60,7 +79,8 @@ def render_history(
             lines = [render_line(m.ts, m.speaker or "owner", m.content or "", tz) for m in group]
             block = None if msg.turn_id in seen_turns else recall_blocks.get(msg.turn_id or "")
             seen_turns.add(msg.turn_id)
-            out.append({"role": "user", "content": "\n".join(([block] if block else []) + lines)})
+            text = "\n".join(([block] if block else []) + lines)
+            out.append({"role": "user", "content": with_images(text, [p for m in group for p in images_of(m)], load_image)})
             i = j
             continue
         if msg.role == "assistant":
@@ -72,7 +92,8 @@ def render_history(
                     api["reasoning_details"] = msg.extra["reasoning_details"]
                 out.append(api)
         elif msg.role == "tool":
-            out.append({"role": "tool", "tool_call_id": msg.tool_call_id, "content": msg.api_content if msg.api_content is not None else msg.content or ""})
+            text = msg.api_content if msg.api_content is not None else msg.content or ""
+            out.append({"role": "tool", "tool_call_id": msg.tool_call_id, "content": with_images(text, images_of(msg), load_image)})
         i += 1
     return out
 

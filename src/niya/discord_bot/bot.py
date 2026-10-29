@@ -18,7 +18,9 @@ from discord import app_commands
 from niya.app.niya import Interface, Niya
 from niya.core.clock import RealClock
 from niya.core.config import Settings
+from niya.core.media import MediaStore
 from niya.core.redact import Redactor
+from niya.discord_bot.attachments import save_attachments
 from niya.discord_bot.progress import ProgressBubble
 from niya.discord_bot.text import FILE_THRESHOLD, SleepReplyLimiter, chunk_message, should_handle
 
@@ -36,6 +38,7 @@ class NiyaDiscord:
         self.client = discord.Client(intents=intents)
         self.tree = app_commands.CommandTree(self.client)
         self.redact = Redactor(settings.secrets.values())
+        self.media = MediaStore(settings.media_dir, settings.tz)
         self.progress = ProgressBubble(self._target)
         self.niya = Niya(
             settings, Interface(channel="Discord", say=self.send, notice=self.send, confirm=self._confirm, on_busy=self._busy, progress=self.progress.add)
@@ -161,11 +164,14 @@ class NiyaDiscord:
         if text == "!wake":
             await message.channel.send(await self.niya.wake())
             return
-        attachments = [f"[附件] {a.filename}：{a.url}" for a in message.attachments]
-        text = "\n".join([text, *attachments]).strip()
+        lines, images = await save_attachments(message.attachments, self.media, now=RealClock().now())
+        text = "\n".join([text, *lines]).strip()
         if not text:
             return
-        note = self.niya.owner_says(text, meta={"channel_id": message.channel.id, "message_id": message.id})
+        meta: dict[str, Any] = {"channel_id": message.channel.id, "message_id": message.id}
+        if images:
+            meta["images"] = images
+        note = self.niya.owner_says(text, meta=meta)
         if note and self.limiter.allow(RealClock().now()):
             await message.channel.send("睡覺中（整理完就醒），急事請 /wake 或 !wake。")
 

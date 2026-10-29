@@ -98,6 +98,11 @@ class Settings:
         return self.secrets.get("OPENROUTER_API_KEY", "")
 
     @property
+    def media_dir(self) -> Path:
+        """Pictures and files niya receives, takes and makes."""
+        return self.home / "media"
+
+    @property
     def claude_config_dir(self) -> Path:
         """Claude Code keeps its login and transcripts here, apart from the owner's own ~/.claude."""
         return self.home / "claude"

@@ -67,7 +67,7 @@ def apply_cache_control(model: str, messages: Sequence[dict[str, Any]]) -> list[
         return out
     targets = [0] if out and out[0].get("role") == "system" else []
     for i in range(len(out) - 1, -1, -1):
-        if out[i].get("role") in ("user", "assistant") and isinstance(out[i].get("content"), str) and out[i]["content"]:
+        if out[i].get("role") in ("user", "assistant") and out[i].get("content"):
             if i not in targets:
                 targets.append(i)
             break
@@ -75,6 +75,9 @@ def apply_cache_control(model: str, messages: Sequence[dict[str, Any]]) -> list[
         content = out[i].get("content")
         if isinstance(content, str):
             out[i]["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        elif isinstance(content, list):
+            # A message with pictures: the breakpoint goes on its last part.
+            out[i]["content"] = [*content[:-1], {**content[-1], "cache_control": {"type": "ephemeral"}}]
     return out
 
 

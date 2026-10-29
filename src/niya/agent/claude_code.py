@@ -43,6 +43,7 @@ from niya.agent.loop import RecallHook, TurnResult, new_turn_id, recall_into
 from niya.agent.render import render_history
 from niya.core.clock import Clock
 from niya.core.inbox import InboundItem, turn_source
+from niya.core.media import encoded
 from niya.llm.choice import effort_for
 from niya.llm.claude_cli import claude_env
 from niya.llm.openrouter import CallRecord, ChatResult, LLMError, Recorder, ToolCall, Usage
@@ -213,7 +214,7 @@ class ClaudeCodeAgent:
         try:
             client = await self._ensure_client(turn)
             prompt = render_history(conv.messages[start:], conv.tz, conv.recall_blocks)[0]["content"]
-            await client.query(prompt)
+            await client.query(prompt if isinstance(prompt, str) else _user_message(prompt))
             async for message in client.receive_response():
                 self._handle(turn, message)
             self._flush(turn)
@@ -363,8 +364,10 @@ class ClaudeCodeAgent:
         text = _block_text(block.content)
         stash = self._stash.get((call.name, key))
         outcome = stash.popleft() if stash else None
-        full = outcome.full_content if outcome is not None and outcome.content == text else text
-        result = ToolOutcome(call=call, content=text, full_content=full, is_error=bool(block.is_error))
+        same = outcome is not None and outcome.content == text
+        full = outcome.full_content if same else text
+        images = outcome.images if same else ()
+        result = ToolOutcome(call=call, content=text, full_content=full, is_error=bool(block.is_error), images=images)
         self.conversation.add_tool_result(turn.turn_id, result, ts=self.clock.now())
 
     def _record_call(self, message: ResultMessage) -> None:
@@ -412,11 +415,29 @@ class ClaudeCodeAgent:
         [outcome] = await self.tools.execute([call], turn.ctx)
         # The handler never learns Claude's tool_use_id; the stream's tool_result is matched back by name + args.
         self._stash[(name, _args_key(args))].append(outcome)
-        return _tool_result(outcome.content, is_error=outcome.is_error)
+        return _tool_result(outcome.content, is_error=outcome.is_error, images=outcome.images)
 
 
-def _tool_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
-    return {"content": [{"type": "text", "text": text}], "is_error": is_error}
+def _tool_result(text: str, *, is_error: bool = False, images: Sequence[str] = ()) -> dict[str, Any]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for path in images:
+        if found := encoded(path):
+            content.append({"type": "image", "data": found[1], "mimeType": found[0]})
+        else:
+            content[0]["text"] += f"\n（圖片已經不在了：{path}）"
+    return {"content": content, "is_error": is_error}
+
+
+async def _user_message(parts: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+    """A turn with pictures goes in as content blocks instead of a plain prompt string."""
+    blocks: list[dict[str, Any]] = []
+    for part in parts:
+        if part["type"] == "text":
+            blocks.append({"type": "text", "text": part["text"]})
+        else:
+            header, data = part["image_url"]["url"].split(",", 1)
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": header.removeprefix("data:").removesuffix(";base64"), "data": data}})
+    yield {"type": "user", "message": {"role": "user", "content": blocks}, "parent_tool_use_id": None}
 
 
 def _result_error(message: ResultMessage) -> str:
