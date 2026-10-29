@@ -31,15 +31,14 @@ Limitations:
     where redirect handling is on their servers.
 """
 
+import asyncio
 import ipaddress
 import logging
 import os
-import socket
-import asyncio
 import re
+import socket
 from typing import Any, Optional
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
-
 
 logger = logging.getLogger(__name__)
 
@@ -647,6 +646,7 @@ def _origin_scheme_context(request: Any) -> dict[tuple[str, int], str]:
 def ssrf_safe_async_http_transport(**kwargs: Any) -> Any:
     """Return an httpx async transport that pins direct TCP connects to vetted IPs."""
     import contextvars
+
     import httpx
 
     schemes_by_origin_var = contextvars.ContextVar("hermes_ssrf_async_origin_schemes")
@@ -671,6 +671,7 @@ def ssrf_safe_async_http_transport(**kwargs: Any) -> Any:
 def ssrf_safe_http_transport(**kwargs: Any) -> Any:
     """Return an httpx sync transport that pins direct TCP connects to vetted IPs."""
     import contextvars
+
     import httpx
 
     schemes_by_origin_var = contextvars.ContextVar("hermes_ssrf_origin_schemes")

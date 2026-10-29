@@ -16,9 +16,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from niya.agent.render import format_ts
-from niya.brain import Brain
-from niya.clock import Clock
-from niya.db import Database
+from niya.app.brain import Brain
+from niya.core.clock import Clock
+from niya.core.db import Database
 from niya.memory.engine import MemoryEngine
 from niya.memory.episodic import close_idle_segments, close_session_segments
 from niya.sleep.llm import Completer

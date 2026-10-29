@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from niya.llm import ToolCall
+from niya.llm.openrouter import ToolCall
 
 log = logging.getLogger(__name__)
 

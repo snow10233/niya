@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from niya.db import Database
+from niya.core.db import Database
 from niya.tools.hardline import _normalize_command_for_detection
 
 PENDING_TTL_S = 30 * 60

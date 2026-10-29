@@ -1,7 +1,7 @@
 from typing import Any
 
 from niya.agent.render import format_ts
-from niya.alarms import PURPOSE_LABELS, AlarmError, Alarms, parse_datetime
+from niya.app.alarms import PURPOSE_LABELS, AlarmError, Alarms, parse_datetime
 from niya.tools.registry import Tool, ToolContext, ToolError
 
 DESCRIPTION = (

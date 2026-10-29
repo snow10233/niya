@@ -9,8 +9,8 @@ from typing import Any, Protocol
 
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKError, ResultMessage, TextBlock, query
 
-from niya.claude_cli import claude_env
-from niya.llm import CallRecord, LLMError, OpenRouterClient, Recorder, Usage
+from niya.llm.claude_cli import claude_env
+from niya.llm.openrouter import CallRecord, LLMError, OpenRouterClient, Recorder, Usage
 
 
 class Completer(Protocol):
