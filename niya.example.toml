@@ -29,6 +29,11 @@ persona = "/etc/niya/persona.md"
 searxng_url = ""
 allow_private_urls = false   # 允許抓私有網段（雲端 metadata 位址永遠擋）
 
+[browser]
+# browser_exec 用 Browser Use CLI 操作瀏覽器。裝了 browser-use（uv tool install browser-use）就自動啟用；
+# 也可以自己指定指令，例如 "uvx browser-use"。
+# command = ""
+
 [egress]
 # 讀過外部內容後，把本機資料傳到「陌生主機」的指令會先暫停，等主人回「好」。
 # 這裡列的主機（含子網域）永遠算已知。
