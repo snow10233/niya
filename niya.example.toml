@@ -8,7 +8,7 @@ effort = ""                 # 思考強度：low / medium / high / xhigh / max�
 timezone = "Asia/Taipei"
 max_iterations = 40         # 一回合最多幾次工具呼叫
 max_context_tokens = 200000 # 和模型上限取較小值，是控制成本的旋鈕
-tool_progress = true        # 每次呼叫工具時顯示一行摘要（例如 💻 terminal: systemctl status nginx）
+tool_progress = true        # 呼叫工具時顯示摘要：💻 terminal，下面的 code block 放指令
 
 [discord]
 # 只回應這個 Discord 帳號（在 Discord 開啟開發者模式，對自己的頭像按右鍵「複製使用者 ID」）。

@@ -2,6 +2,7 @@ import asyncio
 import unittest
 
 from niya.discord_bot.progress import ProgressBubble
+from niya.tools.preview import ToolView
 
 
 class FakeMessage:
@@ -26,6 +27,10 @@ class FakeChannel:
         return message
 
 
+def command(text):
+    return ToolView("💻 terminal", text)
+
+
 class ProgressBubbleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.channel = FakeChannel()
@@ -33,24 +38,40 @@ class ProgressBubbleTests(unittest.IsolatedAsyncioTestCase):
         async def target():
             return self.channel
 
+        self.target = target
         self.bubble = ProgressBubble(target)
 
     async def test_a_burst_of_calls_becomes_one_message_with_few_edits(self):
         for i in range(10):
-            self.bubble.add(f"💻 terminal: echo {i}")
+            self.bubble.add(command(f"echo {i}"))
         await self.bubble.flush()
         [message] = self.channel.sent
-        self.assertIn("echo 0", message.content)
-        self.assertIn("echo 9", message.content)
+        self.assertEqual(message.content.count("💻 terminal"), 1)
+        self.assertEqual(message.content.count("```\necho "), 10)
         self.assertLessEqual(message.edits, 1)
 
-    async def test_each_turn_gets_its_own_message(self):
-        self.bubble.add("💻 terminal: ls")
+    async def test_the_same_call_again_is_counted(self):
+        self.bubble.add(command("git status"))
+        self.bubble.add(command("git status"))
+        await self.bubble.flush()
+        self.assertTrue(self.channel.sent[0].content.endswith("``` (×2)"))
+
+    async def test_a_full_message_continues_in_a_new_one(self):
+        bubble = ProgressBubble(self.target, limit=60)
+        for i in range(4):
+            bubble.add(command(f"echo {i} " + "x" * 10))
+        await bubble.flush()
+        self.assertGreater(len(self.channel.sent), 1)
+        self.assertTrue(all(len(m.content) <= 60 for m in self.channel.sent))
+        self.assertTrue(all(m.content.startswith("💻 terminal\n") for m in self.channel.sent))
+
+    async def test_after_finish_the_next_call_starts_a_new_message(self):
+        self.bubble.add(command("ls"))
         await self.bubble.finish()
-        self.bubble.add("📖 read_file: /etc/hosts")
+        self.bubble.add(ToolView("📖 read_file", "hosts"))
         await self.bubble.flush()
         self.assertEqual(len(self.channel.sent), 2)
-        self.assertNotIn("ls", self.channel.sent[1].content)
+        self.assertEqual(self.channel.sent[1].content, "📖 read_file\n```\nhosts\n```")
 
     async def test_a_failed_send_is_logged_not_raised(self):
         async def broken():
@@ -58,7 +79,7 @@ class ProgressBubbleTests(unittest.IsolatedAsyncioTestCase):
 
         bubble = ProgressBubble(broken)
         with self.assertLogs("niya.discord_bot.progress", level="WARNING"):
-            bubble.add("💻 terminal: ls")
+            bubble.add(command("ls"))
             await bubble.flush()
 
 

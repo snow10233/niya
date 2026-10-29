@@ -90,7 +90,7 @@ class NiyaDiscord:
         text = self.redact(text)
         if not text.strip():
             return
-        await self.progress.flush()
+        await self.progress.finish()  # tool calls after this go below what niya says now
         channel = await self._target()
         if len(text) > FILE_THRESHOLD:
             await channel.send("內容比較長，放在附檔：", file=discord.File(io.BytesIO(text.encode("utf-8")), filename="niya.md"))

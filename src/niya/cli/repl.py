@@ -6,6 +6,7 @@ from niya.agent.render import format_ts
 from niya.app.niya import Interface, Niya
 from niya.core.clock import Clock, FakeClock, RealClock
 from niya.core.config import Settings
+from niya.tools.preview import ToolView
 
 HELP = (
     "指令：/status 狀態、/sleep [nap|night] 去睡、/wake 叫醒、/stop 停下目前的工作、/dream 夢境日誌、/new 開新 session、"
@@ -23,8 +24,8 @@ async def _notice(text: str) -> None:
     print(f"\n{text}")
 
 
-def _progress(line: str) -> None:
-    print(f"  {line}")
+def _progress(view: ToolView) -> None:
+    print(f"  {view.line()}")
 
 
 async def _confirm(question: str) -> bool:

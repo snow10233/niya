@@ -1,6 +1,11 @@
 """Pure helpers for the Discord bot: who niya listens to, how often it says it is asleep, splitting long replies, tool progress."""
 
+from collections.abc import Sequence
+
+from niya.tools.preview import ToolView
+
 DISCORD_LIMIT = 2000
+PROGRESS_LIMIT = DISCORD_LIMIT - 64  # hermes leaves the same room for platform quirks
 FILE_THRESHOLD = 6000  # longer replies go out as a .md attachment instead of a wall of messages
 SLEEP_REPLY_INTERVAL_S = 30 * 60
 _INDICATOR_RESERVE = 12
@@ -62,20 +67,19 @@ def chunk_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
     return [f"{chunk}\n（{i}/{total}）" for i, chunk in enumerate(chunks, start=1)]
 
 
-_PROGRESS_FENCE = "```\n{}\n```"
 
-
-def render_progress(lines: list[str], limit: int = DISCORD_LIMIT) -> str:
-    """One turn's tool lines as a code block; once they no longer fit in one message, the oldest drop off."""
-    safe = [line.replace("```", "ˋˋˋ") for line in lines]
-    budget = limit - len(_PROGRESS_FENCE) - 30
-    kept: list[str] = []
-    for line in reversed(safe):
-        budget -= len(line) + 1
-        if budget < 0:
-            break
-        kept.append(line)
-    kept.reverse()
-    if hidden := len(safe) - len(kept):
-        kept.insert(0, f"…（前面還有 {hidden} 個）")
-    return _PROGRESS_FENCE.format("\n".join(kept))
+def render_progress(entries: Sequence[tuple[ToolView, int]]) -> str:
+    """One progress message: a header per run of the same tool, each call's detail in its own code block."""
+    parts: list[str] = []
+    previous = None
+    for view, count in entries:
+        times = f" (×{count})" if count > 1 else ""
+        if not view.detail:
+            parts.append(view.line() + times)
+            previous = None
+            continue
+        if view.header != previous:
+            parts.append(view.header)
+        parts.append(f"```\n{view.detail.replace('```', 'ˋˋˋ')}\n```{times}")
+        previous = view.header
+    return "\n".join(parts)

@@ -1,6 +1,7 @@
 import unittest
 
 from niya.discord_bot.text import SleepReplyLimiter, chunk_message, render_progress, should_handle
+from niya.tools.preview import ToolView
 
 OWNER = 111
 
@@ -57,15 +58,14 @@ class ChunkTests(unittest.TestCase):
 
 
 class ProgressRenderTests(unittest.TestCase):
-    def test_lines_go_in_one_code_block(self):
-        self.assertEqual(render_progress(["💻 terminal: ls", "📖 read_file: a```b"]), "```\n💻 terminal: ls\n📖 read_file: aˋˋˋb\n```")
+    def test_each_call_gets_its_own_block_under_one_header_per_run(self):
+        ls, df, hosts = ToolView("💻 terminal", "ls"), ToolView("💻 terminal", "df -h"), ToolView("📖 read_file", "hosts")
+        text = render_progress([(ls, 1), (df, 2), (hosts, 1), (ToolView("📚 skills_list"), 1)])
+        self.assertEqual(text, "💻 terminal\n```\nls\n```\n```\ndf -h\n``` (×2)\n📖 read_file\n```\nhosts\n```\n📚 skills_list...")
 
-    def test_oldest_lines_drop_off_when_too_long(self):
-        lines = [f"💻 terminal: echo {i} " + "x" * 90 for i in range(40)]
-        text = render_progress(lines)
-        self.assertLessEqual(len(text), 2000)
-        self.assertIn("前面還有", text)
-        self.assertTrue(text.endswith(lines[-1] + "\n```"))
+    def test_fences_inside_a_detail_cannot_break_the_block(self):
+        self.assertEqual(render_progress([(ToolView("💻 terminal", "echo ```"), 1)]), "💻 terminal\n```\necho ˋˋˋ\n```")
+
 
 if __name__ == "__main__":
     unittest.main()
