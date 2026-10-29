@@ -173,5 +173,18 @@ class CacheControlTests(unittest.TestCase):
         self.assertEqual(messages[0]["content"], "S")
 
 
+
+class ParseJsonTests(unittest.TestCase):
+    def test_fences_chatter_and_code_blocks_inside_strings(self):
+        from niya.sleep.llm import parse_json
+
+        inner = {"edits": [{"old": "```bash\nhermes cron list\n```", "new": "```bash\nniya alarm list\n```"}]}
+        self.assertEqual(parse_json(json.dumps(inner)), inner)
+        self.assertEqual(parse_json("好的：\n```json\n{\"a\": 1}\n```\n以上"), {"a": 1})
+        self.assertEqual(parse_json("格式是 {verdict}：\n```json\n{\"a\": 2}\n```"), {"a": 2})
+        with self.assertRaises(ValueError):
+            parse_json("沒有")
+
+
 if __name__ == "__main__":
     unittest.main()

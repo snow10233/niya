@@ -106,14 +106,22 @@ class ClaudeCodeCompleter:
 
 
 def parse_json(text: str) -> Any:
-    """The first JSON object in a reply, tolerating code fences and chatter around it."""
-    text = text.strip()
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if fenced:
-        text = fenced.group(1).strip()
-    start = text.find("{")
-    if start < 0:
-        raise ValueError("回覆裡沒有 JSON")
+    """The first JSON object in a reply, tolerating code fences and chatter around it.
+
+    The object is tried before any fence: its strings may hold markdown code blocks of their own."""
     decoder = json.JSONDecoder()
-    value, _ = decoder.raw_decode(text[start:])
-    return value
+    candidates = [text.strip()]
+    if fenced := re.search(r"```(?:json)?\s*(.*?)```", text, re.S):
+        candidates.append(fenced.group(1).strip())
+    error: ValueError = ValueError("回覆裡沒有 JSON")
+    for candidate in candidates:
+        start = candidate.find("{")
+        if start < 0:
+            continue
+        try:
+            value, _ = decoder.raw_decode(candidate[start:])
+        except ValueError as exc:
+            error = exc
+            continue
+        return value
+    raise error
