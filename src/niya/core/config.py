@@ -14,6 +14,7 @@ SECRET_ENV = (
     "TAVILY_API_KEY",
     "BRAVE_SEARCH_API_KEY",
     "DEEPSEEK_API_KEY",
+    "MINIMAX_API_KEY",
 )
 SYSTEM_CONFIG = Path("/etc/niya/niya.toml")
 PROVIDERS = ("claude", "openrouter")
@@ -85,6 +86,10 @@ class Settings:
     image_provider: str = ""  # empty: OpenRouter when there is a key
     image_model: str = ""
     codex_command: str = ""
+    tts_model: str = "speech-2.8-hd"
+    tts_voice: str = "female-shaonv"
+    tts_region: str = "global"
+    tts_group_id: str = ""
     discord_owner_id: int = 0
     discord_channel_ids: frozenset[int] = frozenset()
     discord_guild_id: int = 0
@@ -142,6 +147,9 @@ def load_settings(
     discord = data.get("discord", {})
     browser = data.get("browser", {})
     image = data.get("image", {})
+    tts = data.get("tts", {})
+    if tts.get("region", "global") not in ("global", "cn"):
+        raise ValueError("[tts] region 只能是 global 或 cn。")
     if image.get("provider") and image["provider"] not in IMAGE_PROVIDERS:
         raise ValueError(f"未知的生圖服務：{image['provider']}（可用：{'、'.join(IMAGE_PROVIDERS)}）")
 
@@ -197,6 +205,10 @@ def load_settings(
         image_provider=str(image.get("provider", "")),
         image_model=str(image.get("model", "")),
         codex_command=str(image.get("codex_command", "")),
+        tts_model=str(tts.get("model", "speech-2.8-hd")),
+        tts_voice=str(tts.get("voice_id", "female-shaonv")),
+        tts_region=str(tts.get("region", "global")),
+        tts_group_id=str(env.get("MINIMAX_GROUP_ID") or tts.get("group_id", "")),
         discord_owner_id=int(env.get("NIYA_DISCORD_OWNER_ID") or discord.get("owner_id") or 0),
         discord_channel_ids=frozenset(int(c) for c in discord.get("channel_ids", ())),
         discord_guild_id=int(discord.get("guild_id") or 0),
