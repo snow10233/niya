@@ -13,9 +13,10 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from niya.core.media import MAX_IMAGE_BYTES, describe, image_type
 from niya.tools.fuzzy_match import format_no_match_hint, fuzzy_find_and_replace
 from niya.tools.protected_paths import ProtectedPaths, is_sshd_config, validate_sshd
-from niya.tools.registry import Tool, ToolContext, ToolError
+from niya.tools.registry import Tool, ToolContext, ToolError, ToolText
 
 MAX_READ_CHARS = 100_000
 MAX_READ_LINES = 2000
@@ -123,12 +124,20 @@ def file_tools(cwd: Callable[[], str], protected: ProtectedPaths, *, sshd_valida
                 atomic_write(path, previous)
             raise ToolError(f"sshd -t 驗證失敗，已還原原本的檔案：\n{problem}")
 
-    async def read_file(args: dict[str, Any], ctx: ToolContext) -> str:
+    async def read_file(args: dict[str, Any], ctx: ToolContext) -> str | ToolText:
         path = _resolve(args.get("path"), cwd())
         if not path.exists():
             raise ToolError(f"找不到檔案：{path}{_suggest(path)}")
         if path.is_dir():
             raise ToolError(f"{path} 是目錄，請用 search_files（target=files）列出內容。")
+        if image_type(path):
+            if path.stat().st_size > MAX_IMAGE_BYTES:
+                raise ToolError(f"{path} 太大了（上限 {MAX_IMAGE_BYTES // 1024 // 1024} MB）。")
+            try:
+                size = describe(path)
+            except Exception as exc:
+                raise ToolError(f"{path} 打不開：{exc}") from None
+            return ToolText(f"圖片 {path}（{size}），附在這裡。", images=(str(path),))
         if _is_binary(path):
             raise ToolError(f"{path} 看起來是二進位檔，無法用文字讀取。")
         offset = max(int(args.get("offset") or 1), 1)
@@ -194,7 +203,7 @@ def file_tools(cwd: Callable[[], str], protected: ProtectedPaths, *, sshd_valida
         return "\n".join(page) + more
 
     return [
-        Tool(name="read_file", description="讀取文字檔，每行前面加上行號（格式 行號|內容）。讀大檔用 offset 和 limit 分段。代替 terminal 裡的 cat/head/tail。", parameters=READ_PARAMETERS, handler=read_file, toolset="file", parallel_safe=True, output_kind="file", max_result_chars=MAX_READ_CHARS + 2000),
+        Tool(name="read_file", description="讀取文字檔，每行前面加上行號（格式 行號|內容）。讀大檔用 offset 和 limit 分段。代替 terminal 裡的 cat/head/tail。圖片（png、jpg、webp、gif）會直接附上讓你看。", parameters=READ_PARAMETERS, handler=read_file, toolset="file", parallel_safe=True, output_kind="file", max_result_chars=MAX_READ_CHARS + 2000),
         Tool(name="write_file", description="把完整內容寫入檔案（整個覆寫），會自動建立上層目錄。局部修改請用 patch。代替 terminal 裡的 echo/heredoc。", parameters=WRITE_PARAMETERS, handler=write_file, toolset="file"),
         Tool(name="patch", description="在檔案裡找一段文字並取代，會容忍空白和縮排的小差異，回傳 unified diff。代替 terminal 裡的 sed/awk。", parameters=PATCH_PARAMETERS, handler=patch, toolset="file"),
         Tool(name="search_files", description="搜尋檔案內容（target=content，正規表示式）或依檔名找檔案（target=files，glob，依修改時間排序）。代替 terminal 裡的 grep/rg/find/ls。", parameters=SEARCH_PARAMETERS, handler=search_files, toolset="file", parallel_safe=True, output_kind="file"),

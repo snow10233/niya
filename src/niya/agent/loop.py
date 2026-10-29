@@ -7,8 +7,10 @@ from typing import Any, Protocol
 
 from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, estimate_all, over
 from niya.agent.context import Conversation
+from niya.agent.render import images_of
 from niya.core.clock import Clock
 from niya.core.inbox import InboundItem, turn_source
+from niya.core.media import IMAGE_TOKENS
 from niya.llm.openrouter import ChatResult
 from niya.tools.registry import ToolContext, ToolRegistry
 
@@ -147,7 +149,8 @@ class Agent:
     def context_tokens(self) -> int:
         """The last reported prompt size plus a generous estimate of everything added since."""
         added = self.conversation.messages[self._counted :]
-        return self.last_prompt_tokens + estimate_all(m.api_content if m.api_content is not None else m.content for m in added)
+        pictures = sum(len(images_of(m)) for m in added)
+        return self.last_prompt_tokens + estimate_all(m.api_content if m.api_content is not None else m.content for m in added) + pictures * IMAGE_TOKENS
 
     async def set_model(self, model: str) -> None:
         self.model = model

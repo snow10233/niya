@@ -29,6 +29,7 @@ class ToolText:
     text: str
     external: bool = False
     source: str | None = None
+    images: tuple[str, ...] = ()  # image files the model should see with the text
 
 
 Handler = Callable[[dict[str, Any], ToolContext], Awaitable["str | ToolText"]]
@@ -62,6 +63,7 @@ class ToolOutcome:
     full_content: str
     is_error: bool = False
     external_source: str | None = None
+    images: tuple[str, ...] = ()
 
 
 def truncate(text: str, limit: int) -> str:
@@ -160,8 +162,9 @@ class ToolRegistry:
         except Exception as exc:
             log.exception("tool %s failed", call.name)
             return _error(call, f"工具執行失敗：{type(exc).__name__}: {exc}")
+        images: tuple[str, ...] = ()
         if isinstance(result, ToolText):
-            text, external, source = result.text, result.external or tool.output_kind == "external", result.source
+            text, external, source, images = result.text, result.external or tool.output_kind == "external", result.source, result.images
         else:
             text, external, source = result, tool.output_kind == "external", None
         for output_filter in self.output_filters:
@@ -171,6 +174,7 @@ class ToolRegistry:
             content=truncate(text, tool.max_result_chars),
             full_content=text,
             external_source=(source or tool.name) if external else None,
+            images=images,
         )
 
 
