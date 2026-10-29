@@ -155,10 +155,18 @@ uv sync --frozen
 mkdir -p /etc/niya && chmod 700 /etc/niya
 cp niya.example.toml /etc/niya/niya.toml                  # 填 [discord] owner_id、[paths] 等
 cp persona.example.md /etc/niya/persona.md                # 寫下你希望 niya 知道的關於你的事
-install -m 600 /dev/null /etc/niya/niya.env               # 寫入 DISCORD_TOKEN、OPENROUTER_API_KEY 等
+install -m 600 .env.example /etc/niya/niya.env           # 複製成只有 root 能讀的密鑰檔，再填入
+nano /etc/niya/niya.env
 ```
 
-`/etc/niya/niya.env` 的內容和 `.env.example` 一樣，只放密鑰。
+`/etc/niya/niya.env` 只放密鑰：
+
+- **一定要填**：`DISCORD_TOKEN`，以及 `OPENROUTER_API_KEY`（記憶的 embedding 走 OpenRouter，用 Claude 訂閱對話也需要）。
+- **主人 ID**：`NIYA_DISCORD_OWNER_ID`，或寫在 `niya.toml` 的 `[discord] owner_id`，擇一即可。
+- **用 Claude 訂閱**：`CLAUDE_CODE_OAUTH_TOKEN`、`ANTHROPIC_API_KEY` 留空，下一步用 `niya login` 登入。
+- **網路搜尋**：`TAVILY_API_KEY` 或 `BRAVE_SEARCH_API_KEY`，可以之後再補。
+- **`NIYA_HOME=.niya` 那行要刪掉**：那是本機開發用的，留著資料會跑到 `/opt/niya/.niya`，不會放在 `/var/lib/niya`。
+- 留空的項目等於沒設定，不用刪。
 
 ### 3. 登入 Claude、檢查、啟動
 
