@@ -72,3 +72,16 @@ def build_system_prompt(
     if core_block:
         sections.append(core_block)
     return "\n\n".join(sections)
+
+
+SUBAGENT_RULES = """# 你是 niya 派出去的子 agent
+niya 是住在主人 VPS 上的 AI 助理。它把一件工作交給你，你用自己的 context 把它做完，只把結果報告回去。
+- 你看不到 niya 和主人的對話，只知道任務說明裡寫的事。缺少必要資訊時，不要猜，在報告裡說明需要什麼。
+- 每則訊息開頭的 [YYYY-MM-DD (週) HH:MM] 是發生時間（{timezone}）。
+- 專心做這件工作，不要做任務以外的事。
+- 做完後用簡短的報告回覆：做了什麼、結果、重要的發現（路徑、數字、錯誤訊息），以及沒完成的部分。報告是給 niya 看的，不是給主人。"""
+
+
+def build_subagent_prompt(*, timezone: str, run_as: str) -> str:
+    """Subagents get the task and the rules only: no persona, no memory, no core block."""
+    return "\n\n".join([SUBAGENT_RULES.format(timezone=timezone), SAFETY_RULES.format(run_as=run_as)])

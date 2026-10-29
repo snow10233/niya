@@ -1,4 +1,5 @@
 import os
+import re
 import tomllib
 from collections.abc import MutableMapping
 from dataclasses import dataclass, field
@@ -17,6 +18,43 @@ SYSTEM_CONFIG = Path("/etc/niya/niya.toml")
 PROVIDERS = ("claude", "openrouter")
 # Claude Code takes low–max; OpenRouter also takes none and minimal.
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+@dataclass(frozen=True)
+class McpServer:
+    """One MCP server: a local command over stdio, or a URL (streamable HTTP)."""
+
+    name: str
+    command: str = ""
+    args: tuple[str, ...] = ()
+    env: tuple[tuple[str, str], ...] = ()  # values may reference ${VAR}; those vars are treated as secrets
+    url: str = ""
+    timeout_s: float = 60.0
+
+
+def _mcp_servers(data: dict) -> tuple[McpServer, ...]:
+    servers = []
+    for name, spec in (data.get("servers") or {}).items():
+        if not isinstance(spec, dict) or spec.get("enabled") is False:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", name):
+            raise ValueError(f"MCP server 名稱只能用英數字、- 和 _：{name}")
+        if bool(spec.get("command")) == bool(spec.get("url")):
+            raise ValueError(f"MCP server {name} 要設定 command 或 url（擇一）")
+        servers.append(
+            McpServer(
+                name=name,
+                command=str(spec.get("command") or ""),
+                args=tuple(str(a) for a in spec.get("args") or ()),
+                env=tuple((str(k), str(v)) for k, v in (spec.get("env") or {}).items()),
+                url=str(spec.get("url") or ""),
+                timeout_s=float(spec.get("timeout_s", 60)),
+            )
+        )
+    return tuple(servers)
 
 
 @dataclass(frozen=True)
@@ -38,6 +76,7 @@ class Settings:
     embedding_dimensions: int = 1024
     sleep_model: str = ""
     sleep_budget_usd: float = 1.0
+    mcp_servers: tuple[McpServer, ...] = ()
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
@@ -101,9 +140,13 @@ def load_settings(
     if effort and effort not in EFFORTS:
         raise ValueError(f"未知的 effort：{effort}（可用：{'、'.join(EFFORTS)}）")
 
-    secrets = {key: value for key in SECRET_ENV if (value := env.get(key, "").strip())}
+    mcp_servers = _mcp_servers(data.get("mcp", {}))
+    # Tokens handed to MCP servers get the same care as niya's own keys: out of the environment, redacted everywhere.
+    referenced = {ref for server in mcp_servers for _, value in server.env for ref in _ENV_REF.findall(value)}
+    secret_names = (*SECRET_ENV, *sorted(referenced - set(SECRET_ENV)))
+    secrets = {key: value for key in secret_names if (value := env.get(key, "").strip())}
     if pop_secrets:
-        for key in SECRET_ENV:
+        for key in secret_names:
             env.pop(key, None)
 
     return Settings(
@@ -124,5 +167,11 @@ def load_settings(
         embedding_dimensions=int(memory.get("embedding_dimensions", 1024)),
         sleep_model=env.get("NIYA_SLEEP_MODEL") or sleep.get("model", ""),
         sleep_budget_usd=float(sleep.get("budget_usd", 1.0)),
+        mcp_servers=mcp_servers,
         secrets=secrets,
     )
+
+
+def resolve_env(value: str, secrets: dict[str, str]) -> str:
+    """Fill ${VAR} references in an MCP server's env from the secrets niya read at startup."""
+    return _ENV_REF.sub(lambda m: secrets.get(m.group(1), ""), value)

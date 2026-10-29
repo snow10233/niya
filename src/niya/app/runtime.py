@@ -9,7 +9,7 @@ import niya
 from niya.agent.claude_code import ClaudeCodeAgent
 from niya.agent.context import Conversation
 from niya.agent.loop import Agent
-from niya.agent.prompts import build_system_prompt, load_persona
+from niya.agent.prompts import build_subagent_prompt, build_system_prompt, load_persona
 from niya.agent.sanitize import neutralize, wrap_untrusted
 from niya.app.alarms import Alarms
 from niya.core.clock import Clock
@@ -18,14 +18,16 @@ from niya.core.db import Database
 from niya.core.inbox import InboundItem
 from niya.core.redact import Redactor
 from niya.llm.choice import CLAUDE, ModelChoice, current_choice, current_effort, parse_choice
-from niya.llm.openrouter import OpenRouterClient, OpenRouterEmbedder, db_recorder
+from niya.llm.openrouter import LLMError, OpenRouterClient, OpenRouterEmbedder, db_recorder
 from niya.memory.engine import MemoryEngine, core_ids
 from niya.skills.store import SkillStore
 from niya.sleep.llm import ClaudeCodeCompleter, Completer, OpenRouterCompleter
 from niya.tools.alarm_tool import alarm_tools
+from niya.tools.delegate import delegate_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
+from niya.tools.mcp_client import McpConnections
 from niya.tools.memory_tools import memory_tools
 from niya.tools.processes import BackgroundProcess, ProcessRegistry
 from niya.tools.protected_paths import ProtectedPaths
@@ -84,9 +86,12 @@ class CoreTools:
     memory: MemoryEngine
     skills: SkillStore
     openrouter: OpenRouterClient | None = None
+    mcp: McpConnections | None = None
     clients: list[httpx.AsyncClient | OpenRouterClient] = field(default_factory=list)
 
     async def close(self) -> None:
+        if self.mcp is not None:
+            await self.mcp.aclose()
         await self.processes.shutdown()
         self.shell.close()
         for client in self.clients:
@@ -159,6 +164,8 @@ def build_core_tools(
             gate.mark_tainted(ctx.session_id, ctx.turn_id, outcome.external_source)
 
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
+    for tool in delegate_tools(subagent_runner(settings, db, clock, registry, gate)):
+        registry.register(tool)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])
     return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, skills=skills, openrouter=embed_client, clients=clients)
 
@@ -219,6 +226,59 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
         on_turn_end=tools.egress.end_turn,
         recall=recall_hook(tools.memory),
     )
+
+
+SUBAGENT_TOOLS = frozenset({"terminal", "process", "read_file", "write_file", "patch", "search_files", "web_search", "web_extract", "skills_list", "skill_view"})
+SUBAGENT_ITERATIONS = 25
+
+
+def subagent_runner(settings: Settings, db: Database, clock: Clock, registry: ToolRegistry, gate: EgressGate, make_agent: Callable[..., "AnyAgent"] | None = None):
+    """Each delegate_task call gets a fresh, memory-less agent on the current model, one level deep."""
+
+    def default_agent(**common) -> AnyAgent:
+        if current_choice(db, settings)[0].provider == CLAUDE:
+            return ClaudeCodeAgent(config_dir=settings.claude_config_dir, cwd=settings.home, secrets=settings.secrets, recorder=db_recorder(db, clock), **common)
+        return Agent(llm=OpenRouterClient(settings.api_key, base_url=settings.base_url, recorder=db_recorder(db, clock)), **common)
+
+    make_agent = make_agent or default_agent
+
+    async def run(task: str, context: str, ctx: ToolContext) -> tuple[str, str | None]:
+        external: list[str] = []
+
+        def record(tool_ctx: ToolContext, outcome: ToolOutcome) -> None:
+            if outcome.external_source:
+                gate.mark_tainted(tool_ctx.session_id, tool_ctx.turn_id, outcome.external_source)
+                external.append(outcome.external_source)
+
+        names = [n for n in registry.names() if n in SUBAGENT_TOOLS or n.startswith("mcp__")]
+        tools = ToolRegistry((registry.get(n) for n in names), output_filters=registry.output_filters, on_outcome=record)
+        prompt = build_subagent_prompt(timezone=settings.timezone, run_as=getpass.getuser())
+        conv = Conversation.start_new(db, now=clock.now(), tz=settings.tz, system_prompt=prompt, kind="sub", parent_id=ctx.session_id)
+        choice = current_choice(db, settings)[0]
+        common = dict(model=choice.model, tools=tools, conversation=conv, clock=clock, max_iterations=SUBAGENT_ITERATIONS,
+                      max_context_tokens=settings.max_context_tokens, effort=current_effort(db, settings)[0] or None, tool_scope=(ctx.session_id, ctx.turn_id))
+        agent = make_agent(**common)
+        brief = f"任務：{task}" + (f"\n\n背景：{context}" if context else "")
+        try:
+            result = await agent.run_turn([InboundItem("system", brief, clock.now())])
+            report = result.text
+        except LLMError as exc:
+            report = f"子 agent 失敗了：{exc}"
+        finally:
+            await agent.aclose()
+            conv.end(now=clock.now(), reason="done")
+        return report, external[0] if external else None
+
+    return run
+
+
+async def connect_mcp(settings: Settings, tools: CoreTools, *, targets=None) -> McpConnections:
+    """Connect the configured MCP servers and add their tools; must run before any agent is built."""
+    connections = McpConnections()
+    for tool in await connections.connect(settings.mcp_servers, secrets=settings.secrets, targets=targets):
+        tools.registry.register(tool)
+    tools.mcp = connections
+    return connections
 
 
 def needs_new_session(conversation: Conversation, choice: ModelChoice) -> bool:

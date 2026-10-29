@@ -10,6 +10,7 @@ from niya.app.runtime import (
     AnyAgent,
     build_agent,
     build_core_tools,
+    connect_mcp,
     needs_new_session,
     open_conversation,
     process_notice,
@@ -107,6 +108,9 @@ async def run_repl(settings: Settings, *, fake_clock: str | None = None) -> int:
         clock = FakeClock(start)
     inbox = Inbox(db, clock)
     tools = build_core_tools(settings, db, clock, notify_owner=_notify, on_process_exit=lambda bg: inbox.put("process", process_notice(bg)))
+    mcp = await connect_mcp(settings, tools)
+    for name, error in mcp.errors.items():
+        print(f"（MCP server {name} 連不上，先略過：{error}）")
     prompt = system_prompt_factory(settings, channel="主人的終端機", core_block=tools.memory.core_block, skills_index=tools.skills.index)
     choice = current_choice(db, settings)[0]
     conv = open_conversation(db, settings, clock, prompt)
