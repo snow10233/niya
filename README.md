@@ -10,6 +10,31 @@
 
 - **M1 骨架**：設定、資料庫、OpenRouter client、工具註冊、帶時間戳的訊息呈現、agent loop、REPL 和環境檢查。
 - **M2 工具與安全防護**：terminal（含背景程序）、檔案工具、網路搜尋與擷取；黑名單、受保護路徑、密鑰遮蔽、偽造標記中和、SSRF 防護，以及「可疑外傳才問」。
+- **模型選擇**：用 Claude 訂閱（透過官方 Claude Code）或 OpenRouter，可隨時用 `niya model` 或 `/model` 切換。
+
+## 模型與登入
+
+預設是 `claude:opus`：透過 `claude-agent-sdk` 內附的官方 Claude Code 執行，用量算在 Claude 訂閱裡。
+
+```sh
+uv run --env-file .env niya login        # 用 Claude 帳號登入（Claude Code 自己的登入流程）
+uv run --env-file .env niya model        # 查看、切換模型
+```
+
+- **登入**：
+  - 憑證由 Claude Code 自己存在 `$NIYA_HOME/claude`，跟你自己的 `~/.claude` 分開，niya 不會讀它。
+  - VPS 沒有瀏覽器時，`niya login` 會印出網址，在自己的電腦打開，再把代碼貼回來。
+  - 也可以用 `niya login --token` 產生長效 token，存成 `CLAUDE_CODE_OAUTH_TOKEN`。
+- **切換模型**：
+  - `niya model sonnet`，或在 REPL 裡打 `/model sonnet`、`/model openrouter:<模型 ID>`、`/model reset`（改回設定檔）。
+  - 同一個 provider 換模型會直接套用；換 provider 會開新 session，舊的紀錄留在資料庫。
+- **為什麼不像 Hermes 那樣直接拿 token 呼叫 API**：Anthropic 規定訂閱登入只能用在官方的 Claude Code 和 Anthropic 自己的 App，第三方程式不能取出或代管登入憑證，從 2026 年 1 月起也會主動封鎖。所以 niya 改成在背後執行官方 Claude Code。
+- **額度**：訂閱有 5 小時和每週的用量上限，用完時 niya 會告訴你幾點重置。設了 `ANTHROPIC_API_KEY` 就改走 API 計費。
+- **Claude 模式跟 OpenRouter 模式的差別**：
+  - 工具迴圈和 API context 由 Claude Code 管。niya 的工具以 MCP 的形式提供，模型看到的名稱是 `mcp__niya__terminal` 這類。
+  - 所有工具一樣經過黑名單、外傳檢查和密鑰遮蔽。每則訊息也一樣存進 niya 的資料庫。
+  - Claude Code 的自動壓縮已經關掉，context 滿了照計畫提早睡覺。
+- 記憶用的 embedding（M5）還是走 OpenRouter。
 
 ## 安全機制
 
@@ -24,13 +49,14 @@ niya 在 VPS 上以 root 執行，終端機只擋黑名單，不需要主人逐�
 ## 本機執行
 
 ```sh
-cp .env.example .env   # 填入 OPENROUTER_API_KEY 和 NIYA_MODEL
+cp .env.example .env   # 用 Claude 訂閱的話不用填；用 OpenRouter 就填 OPENROUTER_API_KEY
 uv sync
+uv run --env-file .env niya login
 uv run --env-file .env niya doctor
 uv run --env-file .env niya repl
 ```
 
-- REPL 裡輸入 `/new` 開新 session，`/quit` 離開。
+- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/quit` 離開。
 - 資料存在 `NIYA_HOME`（`.env.example` 預設是專案目錄下的 `.niya/`）的 `niya.db`。VPS 上預設是 `/var/lib/niya`。
 - 設定檔可以用 `--config` 或 `NIYA_CONFIG` 指定，格式見 `niya.example.toml`。人格設定見 `persona.example.md`。
 - 密鑰只從環境變數讀，讀完就從環境中移除，不要寫進設定檔或提交到 Git。

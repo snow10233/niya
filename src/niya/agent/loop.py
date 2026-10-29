@@ -43,6 +43,10 @@ def new_turn_id() -> str:
 
 
 class Agent:
+    """niya's own tool loop over an OpenAI-compatible chat API (OpenRouter)."""
+
+    engine = "openrouter"
+
     def __init__(
         self,
         *,
@@ -72,6 +76,8 @@ class Agent:
         turn_id = new_turn_id()
         conv.start_turn(turn_id, source=items[0].speaker, ts=self.clock.now())
         conv.add_user_items(turn_id, items)
+        if conv.engine is None:
+            conv.bind_engine(self.engine)
         schemas = self.tools.schemas() or None
         ctx = ToolContext(session_id=conv.session_id, turn_id=turn_id, now=self.clock.now)
         try:
@@ -96,6 +102,14 @@ class Agent:
         finally:
             if self.on_turn_end:
                 self.on_turn_end(conv.session_id)
+
+    async def set_model(self, model: str) -> None:
+        self.model = model
+
+    async def aclose(self) -> None:
+        close = getattr(self.llm, "aclose", None)
+        if close is not None:
+            await close()
 
     async def _chat(self, schemas: list[dict[str, Any]] | None, tool_choice: str | None = None) -> ChatResult:
         result = await self.llm.chat(

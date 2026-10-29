@@ -4,8 +4,11 @@ import sys
 
 import httpx
 
+from niya.claude_cli import auth_status, bundled_cli, cli_version, describe_auth
 from niya.config import Settings
+from niya.db import Database
 from niya.llm import OpenRouterClient
+from niya.model_choice import CLAUDE, current_choice
 
 
 def sqlite_has_trigram() -> bool:
@@ -26,19 +29,31 @@ async def run_doctor(settings: Settings) -> int:
         ("SQLite FTS5 trigram", sqlite_has_trigram(), sqlite3.sqlite_version),
         ("bash", shutil.which("bash") is not None, shutil.which("bash") or "找不到"),
         ("ripgrep（rg）", shutil.which("rg") is not None, shutil.which("rg") or "找不到，search_files 會退回 grep"),
-        ("OPENROUTER_API_KEY", bool(settings.api_key), "已設定" if settings.api_key else "未設定"),
-        ("模型", bool(settings.model), settings.model or "未設定 agent.model / NIYA_MODEL"),
         ("資料目錄", True, str(settings.home)),
     ]
-    if settings.api_key and settings.model:
-        client = OpenRouterClient(settings.api_key, base_url=settings.base_url)
-        try:
-            length = await client.context_length(settings.model)
-            checks.append(("模型 context_length", length is not None, f"{length:,}" if length else "OpenRouter 上找不到這個模型"))
-        except httpx.HTTPError as exc:
-            checks.append(("模型 context_length", False, f"查詢失敗：{type(exc).__name__}"))
-        finally:
-            await client.aclose()
+    db = Database(settings.db_path)
+    try:
+        choice, source = current_choice(db, settings)
+    finally:
+        db.close()
+    checks.append(("模型", True, f"{choice}（{source}）"))
+    if choice.provider == CLAUDE:
+        cli = bundled_cli()
+        checks.append(("Claude Code", cli is not None, f"{cli_version()} {cli}".strip() if cli else "找不到執行檔"))
+        if cli:
+            logged_in, detail = describe_auth(await auth_status(settings), settings)
+            checks.append(("Claude 登入", logged_in, detail))
+    else:
+        checks.append(("OPENROUTER_API_KEY", bool(settings.api_key), "已設定" if settings.api_key else "未設定"))
+        if settings.api_key:
+            client = OpenRouterClient(settings.api_key, base_url=settings.base_url)
+            try:
+                length = await client.context_length(choice.model)
+                checks.append(("模型 context_length", length is not None, f"{length:,}" if length else "OpenRouter 上找不到這個模型"))
+            except httpx.HTTPError as exc:
+                checks.append(("模型 context_length", False, f"查詢失敗：{type(exc).__name__}"))
+            finally:
+                await client.aclose()
 
     ok = True
     for name, passed, detail in checks:

@@ -44,10 +44,12 @@ class Conversation:
         self.db = db
         self.session_id = session_id
         self.tz = tz
-        row = db.one("SELECT system_prompt FROM sessions WHERE id = ?", (session_id,))
+        row = db.one("SELECT system_prompt, engine, engine_session_id FROM sessions WHERE id = ?", (session_id,))
         if row is None:
             raise ValueError(f"找不到 session：{session_id}")
         self.system_prompt: str = row["system_prompt"]
+        self.engine: str | None = row["engine"]
+        self.engine_session_id: str | None = row["engine_session_id"]
         self.messages: list[StoredMessage] = [
             StoredMessage(
                 id=r["id"],
@@ -88,6 +90,15 @@ class Conversation:
 
     def end(self, *, now: float, reason: str) -> None:
         self.db.execute("UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?", (now, reason, self.session_id))
+
+    def bind_engine(self, engine: str, engine_session_id: str | None = None) -> None:
+        """A session runs on one engine for its whole life; Claude Code also needs its own ID to resume."""
+        self.engine = engine
+        self.engine_session_id = engine_session_id or self.engine_session_id
+        self.db.execute(
+            "UPDATE sessions SET engine = ?, engine_session_id = ? WHERE id = ?",
+            (self.engine, self.engine_session_id, self.session_id),
+        )
 
     def start_turn(self, turn_id: str, *, source: str, ts: float, recall_block: str | None = None) -> None:
         last = self.db.one("SELECT MAX(ended_at) AS ended FROM turns WHERE session_id = ?", (self.session_id,))
