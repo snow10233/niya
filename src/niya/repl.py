@@ -57,7 +57,13 @@ async def run_repl(settings: Settings) -> int:
             agent.conversation = restart_conversation(conv, settings, clock, prompt, reason="engine_switch")
             print(f"模型換成 {choice.provider}，已開新 session。")
         control = ModelControl(settings=settings, db=db, clock=clock, tools=tools, prompt=prompt, agent=agent, confirm=_confirm)
-        brain = Brain(inbox=inbox, control=control, egress=tools.egress, reply=_say, report=_report)
+
+        async def context_full(reason: str, used: int) -> None:
+            agent = control.agent
+            agent.conversation = restart_conversation(agent.conversation, settings, clock, prompt, reason=reason)
+            print(f"\n（context 用了 {used}%，先開新 session {agent.conversation.session_id}。之前的對話都在資料庫裡，niya 用 deep_recall 想得起來。）")
+
+        brain = Brain(inbox=inbox, control=control, egress=tools.egress, reply=_say, report=_report, on_context_full=context_full)
         brain_task = asyncio.create_task(brain.run())
         print(f"niya REPL（session {agent.conversation.session_id}，{control.status()}）。\n{HELP}")
         if inbox.pending():
