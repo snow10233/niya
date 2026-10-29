@@ -203,6 +203,8 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(r["system_prompt"] for r in self.db.query("SELECT system_prompt FROM sessions")))
         # By the next day there was something to remember, and the owner's turn was recalled against it.
         self.assertGreater(self.db.one("SELECT COUNT(*) AS n FROM retrieval_events WHERE turn_id LIKE 'hermes-%'")["n"], 0)
+        # Queries were embedded in batches, and the topic shift between back-to-back turns still got measured.
+        self.assertEqual(self.db.one("SELECT COUNT(*) AS n FROM turns WHERE sim_prev IS NOT NULL")["n"], 1)
         self.assertEqual((stats.sleeps, stats.turns), (4, 6))
         self.assertEqual(len(self.lines), 4)
         self.assertEqual(await self.replay.run(present=ts("2026-10-29 12:00")), type(stats)())  # nothing left

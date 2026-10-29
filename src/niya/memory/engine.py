@@ -345,10 +345,13 @@ class MemoryEngine:
 
     # --- automatic recall --------------------------------------------------------------------------
 
-    async def recall(self, query: str, *, session_id: str, turn_id: str, exclude: Iterable[int] = ()) -> RecallResult:
-        """What comes to mind on its own for this turn; also measures how much the topic moved (sim_prev)."""
+    async def recall(self, query: str, *, session_id: str, turn_id: str, exclude: Iterable[int] = (), vector: np.ndarray | None = None) -> RecallResult:
+        """What comes to mind on its own for this turn; also measures how much the topic moved (sim_prev).
+
+        `vector` is the query already embedded (by embed()), for callers that batch many turns.
+        """
         now = self.clock.now()
-        vectors = await self.embed([query])
+        vectors = [vector] if vector is not None else await self.embed([query])
         cos: dict[int, float] = {}
         if vectors is not None:
             vec = vectors[0]
