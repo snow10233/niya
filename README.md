@@ -142,14 +142,15 @@ uv run --env-file .env niya model        # 查看、切換模型
 
 ## 從 Hermes 搬家
 
-把 Hermes 用過的 agent 帶過來：對話照時間重新「活」一遍，整理成 niya 的記憶；筆記拆開來分層；人格從 SOUL.md 來。
-資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db` 和 `memories/`。niya 只讀，不會改它。
+把 Hermes 用過的 agent 帶過來：對話照時間重新「活」一遍，整理成 niya 的記憶；筆記拆開來分層；技能換成 niya 的工具再搬；人格從 SOUL.md 來。
+資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db`、`memories/` 和 `skills/`。niya 只讀，不會改它。
 
 ```sh
 uv run --env-file .env niya hermes import ~/hermes-copy      # 1. 匯入對話（只寫原始紀錄）
 uv run --env-file .env niya hermes replay                    # 2. 回放：每回合自動回想，每天 03:00、13:00 睡覺整理
 uv run --env-file .env niya hermes notes ~/hermes-copy       # 3. 拆筆記，產生審核清單和人格草稿
-uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 4. 看過、改過清單之後匯入
+uv run --env-file .env niya hermes skills ~/hermes-copy      # 4. 讀技能：事實接在審核清單後面，技能列成搬家清單
+uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 5. 看過、改過清單之後一起匯入
 ```
 
 - **匯入**：
@@ -180,6 +181,15 @@ uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 4. 看�
   - **人格**：
     - 從 Hermes 最後一份 system prompt 取出 SOUL.md，拿掉「運行在 Hermes 上」的句子，存成 `persona.hermes.md`。
     - apply 時把 `[persona]` 的筆記接在後面，寫到設定檔的 `persona` 路徑。
+- **技能**：
+  - Hermes 有很多事實只寫在技能裡（路徑、帳號、主人的習慣），回放看不到：睡眠整理只看得到工具名稱和參數。
+  - Hermes 自己寫的、和內建但被改過的技能，模型會逐一讀完，做三件事：
+    - 把事實照筆記的格式抽出來，接在 `hermes-notes.md` 最後面（每個技能一節），跟筆記一起審、一起 apply。
+    - 判斷要不要搬：講 Hermes 本身的、niya 已經內建的（記憶整理、鬧鐘）建議 `[drop]`，其他 `[move]`。
+    - 列出要改的地方，把 Hermes 的工具換成 niya 的（例如 `cronjob_manage` → `alarm`、`send_message` → `discord`、`vision_analyze` → `read_file` 看圖）。
+  - 每個技能都會複製到 `$NIYA_HOME/hermes-skills/<名稱>/`，已經套用修改，技能自己資料夾的路徑換成 `${SKILL_DIR}`。檔案位置不動，附的腳本才找得到自己的檔案。
+  - 搬家清單是 `hermes-skills.md`，改標籤決定搬不搬；要調整內容就直接改 `hermes-skills/` 裡的檔案。Hermes 內建、沒改過的技能只列出來，預設不搬。
+  - apply 時把 `[move]` 的技能搬進 `$NIYA_HOME/skills/`，每個檔案都用最嚴格的規則掃描過；niya 已經有的同名技能不動，所以可以重跑。
 
 ## 安全機制
 
