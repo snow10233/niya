@@ -9,6 +9,15 @@ timezone = "Asia/Taipei"
 max_iterations = 40         # 一回合最多幾次工具呼叫
 max_context_tokens = 200000 # 和模型上限取較小值，是控制成本的旋鈕
 
+[discord]
+# 只回應這個 Discord 帳號（在 Discord 開啟開發者模式，對自己的頭像按右鍵「複製使用者 ID」）。
+owner_id = 0
+# 除了私訊之外，也在這些頻道回應主人（空的就只回私訊）。
+channel_ids = []
+# 設定的話，slash 指令只註冊在這個伺服器，馬上就能用；不設定則是全域指令，可能要等一陣子才出現。
+guild_id = 0
+# bot token 放在環境變數 DISCORD_TOKEN（/etc/niya/niya.env），不要寫在這裡。
+
 [paths]
 home = "/var/lib/niya"
 persona = "/etc/niya/persona.md"

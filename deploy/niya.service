@@ -1,0 +1,22 @@
+[Unit]
+Description=niya — the agent that sleeps, forgets, and knows what time it is
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/niya
+EnvironmentFile=/etc/niya/niya.env
+Environment=NIYA_CONFIG=/etc/niya/niya.toml
+ExecStart=/opt/niya/.venv/bin/niya run
+Restart=on-failure
+RestartSec=10
+# Restarting niya also stops whatever it started with nohup or &; long-running services belong in systemd.
+KillMode=control-group
+TimeoutStopSec=30
+# cgroup limits hold even for root: a fork bomb or a runaway process cannot take the whole VPS down.
+TasksMax=512
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target
