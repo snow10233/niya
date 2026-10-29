@@ -151,6 +151,28 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_inbox_pending ON inbox(taken_at, priority, received_at);
     """,
+    """
+    -- Alarms niya sets for itself: remind the owner, or wake up and do something.
+    CREATE TABLE alarms(
+      id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      purpose TEXT NOT NULL DEFAULT 'remind',
+      note TEXT,
+      cron_expr TEXT,
+      next_fire_at REAL,
+      wake_from_sleep INTEGER NOT NULL DEFAULT 1,
+      late_grace_s REAL NOT NULL,
+      max_fires INTEGER,
+      memory_id INTEGER,
+      created_by TEXT NOT NULL DEFAULT 'niya',
+      created_at REAL NOT NULL,
+      session_id TEXT,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      fire_count INTEGER NOT NULL DEFAULT 0,
+      last_fired_at REAL
+    );
+    CREATE INDEX idx_alarms_due ON alarms(status, next_fire_at);
+    """,
 ]
 
 
