@@ -504,6 +504,21 @@ class EgressGate:
             "系統已經問主人了；收到「主人同意」的通知後，再重新執行同一個指令。不要改用其他方法。"
         )
 
+    async def check_upload(self, what: str, destination: str, *, session_id: str, turn_id: str) -> str | None:
+        """Local files a tool itself sends out (not a command): held back the same way while the session is tainted."""
+        taint = self.taint(session_id, turn_id)
+        suspicious = bool(taint) and not self._approved_command(session_id, what)
+        self._log(session_id, turn_id, what, [Egress(what.split(" ", 1)[0], (destination,), True)], taint is not None, suspicious)
+        if not suspicious:
+            return None
+        pending = self._create_pending(session_id, turn_id, what, (destination,), taint or "")
+        if self.notify:
+            await self.notify(f"⚠️ niya 想把本機檔案傳到 {destination}（這個 session 讀過 {pending.taint_source}）。\n內容：`{what}`\n回「好」就放行，回其他內容就不放行。")
+        return (
+            f"⛔ 已暫停：這次外傳需要主人同意（原因：讀過外部內容後，要把本機檔案傳到 {destination}）。"
+            "系統已經問主人了；收到「主人同意」的通知後，再用同樣的參數呼叫一次。不要改用其他方法。"
+        )
+
     def _approved_command(self, session_id: str, command: str) -> bool:
         row = self.db.one(
             "SELECT id FROM egress_pending WHERE session_id = ? AND command = ? AND status = 'approved' AND used_at IS NULL AND decided_at >= ?",
