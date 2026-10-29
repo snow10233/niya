@@ -32,6 +32,7 @@ from niya.tools.discord_tool import DiscordRest, discord_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
+from niya.tools.image_gen import CodexImages, ImageBackend, OpenRouterImages, find_codex, image_tools
 from niya.tools.mcp_client import McpConnections
 from niya.tools.memory_tools import memory_tools
 from niya.tools.processes import BackgroundProcess, ProcessRegistry
@@ -125,6 +126,22 @@ def private_file(settings: Settings) -> Callable[[Path], str | None]:
     return check
 
 
+IMAGE_TIMEOUT = 300.0  # an image model can take minutes for one picture
+
+
+def image_backend(settings: Settings, db: Database, clock: Clock, clients: list) -> ImageBackend | None:
+    provider = settings.image_provider or ("openrouter" if settings.api_key else "")
+    if provider == "codex":
+        command = find_codex(settings.codex_command)
+        return CodexImages(command, secret_names=settings.secrets.keys()) if command else None
+    if provider == "openrouter" and settings.api_key:
+        # Its own client: a long timeout, and one retry at most, since every attempt is a paid picture.
+        client = OpenRouterClient(settings.api_key, base_url=settings.base_url, recorder=db_recorder(db, clock), timeout=IMAGE_TIMEOUT, max_retries=1)
+        clients.append(client)
+        return OpenRouterImages(client, settings.image_model)
+    return None
+
+
 def owner_channel(db: Database) -> Callable[[], str | None]:
     """Where the owner last talked to niya (the Discord channel of their latest message)."""
 
@@ -189,6 +206,9 @@ def build_core_tools(
         *skill_tools(skills),
     ]
     media = MediaStore(settings.media_dir, settings.tz)
+    clients: list = [http]
+    if images := image_backend(settings, db, clock, clients):
+        tools += image_tools(images, media)
     if browser := find_cli(settings.browser_command):
         tools += browser_tools(
             browser, workspace=settings.home / "cache" / "browser", media=media, secret_names=settings.secrets.keys(), secrets=settings.secrets.values()
@@ -206,7 +226,7 @@ def build_core_tools(
     registry = ToolRegistry(tools, output_filters=output_filters(redactor), on_outcome=taint)
     for tool in delegate_tools(subagent_runner(settings, db, clock, registry, gate)):
         registry.register(tool)
-    clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])
+    clients += ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])
     return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, skills=skills, openrouter=embed_client, clients=clients)
 
 

@@ -180,6 +180,10 @@ class OpenRouterClient:
             reasoning_details=copy.deepcopy(message.get("reasoning_details")) or None,
         )
 
+    async def chat_raw(self, body: dict[str, Any], *, task: str) -> dict[str, Any]:
+        """The whole response, for outputs ChatResult has no place for (generated images)."""
+        return await self._post("/chat/completions", body, task=task, model=body["model"])
+
     async def embed(self, *, model: str, texts: Sequence[str], dimensions: int | None = None) -> list[list[float]]:
         body: dict[str, Any] = {"model": model, "input": list(texts)}
         if dimensions:

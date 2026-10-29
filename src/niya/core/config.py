@@ -17,6 +17,7 @@ SECRET_ENV = (
 )
 SYSTEM_CONFIG = Path("/etc/niya/niya.toml")
 PROVIDERS = ("claude", "openrouter")
+IMAGE_PROVIDERS = ("openrouter", "codex")
 # Claude Code takes low–max; OpenRouter also takes none and minimal.
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -81,6 +82,9 @@ class Settings:
     sleep_budget_usd: float = 1.0
     mcp_servers: tuple[McpServer, ...] = ()
     browser_command: str = ""
+    image_provider: str = ""  # empty: OpenRouter when there is a key
+    image_model: str = ""
+    codex_command: str = ""
     discord_owner_id: int = 0
     discord_channel_ids: frozenset[int] = frozenset()
     discord_guild_id: int = 0
@@ -137,6 +141,9 @@ def load_settings(
     sleep = data.get("sleep", {})
     discord = data.get("discord", {})
     browser = data.get("browser", {})
+    image = data.get("image", {})
+    if image.get("provider") and image["provider"] not in IMAGE_PROVIDERS:
+        raise ValueError(f"未知的生圖服務：{image['provider']}（可用：{'、'.join(IMAGE_PROVIDERS)}）")
 
     home = Path(env["NIYA_HOME"]) if env.get("NIYA_HOME") else Path(paths["home"]) if paths.get("home") else default_home(env)
     # Absolute from here on: subprocesses (Claude Code, the shell) run elsewhere, and the hardline only guards absolute paths.
@@ -187,6 +194,9 @@ def load_settings(
         sleep_budget_usd=float(sleep.get("budget_usd", 1.0)),
         mcp_servers=mcp_servers,
         browser_command=str(browser.get("command", "")),
+        image_provider=str(image.get("provider", "")),
+        image_model=str(image.get("model", "")),
+        codex_command=str(image.get("codex_command", "")),
         discord_owner_id=int(env.get("NIYA_DISCORD_OWNER_ID") or discord.get("owner_id") or 0),
         discord_channel_ids=frozenset(int(c) for c in discord.get("channel_ids", ())),
         discord_guild_id=int(discord.get("guild_id") or 0),
