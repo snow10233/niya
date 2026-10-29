@@ -53,6 +53,15 @@
     - 相關的記憶聚成一群（至少三條）時，請模型判斷有沒有值得記下的規律，例如「網站 502 通常是 gunicorn 沒啟動」。有的話就記成「想法」。
     - 想法只是 niya 自己的推測，初始 S 只有一半，要之後真的用上才會留下來。
   - **預算**：每次睡眠花在摘要和 REM 的上限是 `[sleep] budget_usd`（預設 1 美元）。對話整理（NREM）一定會做完，不受這個限制。
+- **M7 Skills（程序性記憶）**：
+  - **存放**：技能是 `$NIYA_HOME/skills/<name>/SKILL.md`（YAML frontmatter 加上 markdown 步驟，格式和 Hermes／agentskills.io 相同），可以附 `references/`、`templates/`、`scripts/`、`assets/`。
+  - **工具**：`skills_list`、`skill_view`、`skill_manage`（create、patch、edit、write_file、archive、restore、accept）。刪除一律改成封存，不會真的刪掉。
+  - **何時寫、何時用**：做完複雜、會再遇到的工作，niya 會自己寫成技能；之後遇到同樣的事，先讀技能再照著做。每次開新 session，system prompt 會列出可用的技能。
+  - **安全**：
+    - 技能目錄在受保護的 niya 資料夾裡，只有 `skill_manage` 能寫入，而且寫入前會用最嚴格的規則掃描注入內容。
+    - 讀取時也會掃描，被竄改的技能會顯示 `[BLOCKED]`，不會被當成指令。
+  - **生命週期**：30 天沒用就從 system prompt 的清單拿掉（stale），90 天沒用就封存。被用到就恢復。
+  - **REM 提案**：同一種工作做了三次以上，睡覺時會整理成技能草稿，附上當時實際下過的指令。醒來後由 niya 決定要不要收下。
 
 ## 模型與登入
 

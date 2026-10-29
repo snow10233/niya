@@ -20,6 +20,7 @@ from niya.core.redact import Redactor
 from niya.llm.choice import CLAUDE, ModelChoice, current_choice, current_effort, parse_choice
 from niya.llm.openrouter import OpenRouterClient, OpenRouterEmbedder, db_recorder
 from niya.memory.engine import MemoryEngine, core_ids
+from niya.skills.store import SkillStore
 from niya.sleep.llm import ClaudeCodeCompleter, Completer, OpenRouterCompleter
 from niya.tools.alarm_tool import alarm_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
@@ -30,6 +31,7 @@ from niya.tools.processes import BackgroundProcess, ProcessRegistry
 from niya.tools.protected_paths import ProtectedPaths
 from niya.tools.registry import OutputFilter, Tool, ToolContext, ToolOutcome, ToolRegistry
 from niya.tools.shell import ShellSession
+from niya.tools.skills import skill_tools
 from niya.tools.terminal import egress_guard, hardline_guard, terminal_tools
 from niya.tools.url_safety import set_allow_private_urls
 from niya.tools.web import web_tools
@@ -38,7 +40,7 @@ from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, Se
 CODE_DIR = Path(niya.__file__).resolve().parents[2]
 
 
-FEATURES = ("memory", "alarm", "sleep")
+FEATURES = ("memory", "alarm", "sleep", "skills")
 
 
 def system_prompt_factory(
@@ -47,6 +49,7 @@ def system_prompt_factory(
     channel: str,
     features: Collection[str] = FEATURES,
     core_block: Callable[[], str] | None = None,
+    skills_index: Callable[[], str] | None = None,
 ) -> Callable[[], str]:
     def build() -> str:
         return build_system_prompt(
@@ -55,6 +58,7 @@ def system_prompt_factory(
             channel=channel,
             run_as=getpass.getuser(),
             features=features,
+            skills_index=skills_index() if skills_index else "",
             core_block=core_block() if core_block else "",
         )
 
@@ -78,6 +82,7 @@ class CoreTools:
     egress: EgressGate
     alarms: Alarms
     memory: MemoryEngine
+    skills: SkillStore
     openrouter: OpenRouterClient | None = None
     clients: list[httpx.AsyncClient | OpenRouterClient] = field(default_factory=list)
 
@@ -137,6 +142,7 @@ def build_core_tools(
     embed_client = OpenRouterClient(settings.api_key, base_url=settings.base_url, recorder=db_recorder(db, clock)) if settings.api_key else None
     embedder = OpenRouterEmbedder(embed_client, settings.embedding_model, settings.embedding_dimensions) if embed_client else None
     memory = MemoryEngine(db, clock, settings.tz, embedder=embedder)
+    skills = SkillStore(settings.home / "skills", db, clock)
     http = httpx.AsyncClient(timeout=60)
     search, extract = web_providers(settings, http)
     tools = [
@@ -145,6 +151,7 @@ def build_core_tools(
         *web_tools(search, extract, secrets=settings.secrets.values),
         *memory_tools(memory),
         *alarm_tools(alarms),
+        *skill_tools(skills),
     ]
 
     def taint(ctx: ToolContext, outcome: ToolOutcome) -> None:
@@ -153,7 +160,7 @@ def build_core_tools(
 
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])
-    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, openrouter=embed_client, clients=clients)
+    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, skills=skills, openrouter=embed_client, clients=clients)
 
 
 AnyAgent = Agent | ClaudeCodeAgent

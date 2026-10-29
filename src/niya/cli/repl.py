@@ -107,7 +107,7 @@ async def run_repl(settings: Settings, *, fake_clock: str | None = None) -> int:
         clock = FakeClock(start)
     inbox = Inbox(db, clock)
     tools = build_core_tools(settings, db, clock, notify_owner=_notify, on_process_exit=lambda bg: inbox.put("process", process_notice(bg)))
-    prompt = system_prompt_factory(settings, channel="主人的終端機", core_block=tools.memory.core_block)
+    prompt = system_prompt_factory(settings, channel="主人的終端機", core_block=tools.memory.core_block, skills_index=tools.skills.index)
     choice = current_choice(db, settings)[0]
     conv = open_conversation(db, settings, clock, prompt)
     control: ModelControl | None = None
@@ -144,6 +144,7 @@ async def run_repl(settings: Settings, *, fake_clock: str | None = None) -> int:
             notify=_notify,
             backups_dir=settings.home / "backups",
             budget_usd=settings.sleep_budget_usd,
+            skills=tools.skills,
         )
 
         async def alarm_rang(fired) -> None:
