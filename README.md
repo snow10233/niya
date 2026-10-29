@@ -85,6 +85,7 @@
 - **生圖**：`image_generate` 畫圖，或照參考圖修改。畫好的圖存在 `media/generated/`，會附給 niya 看；滿意了，再用 `discord` 工具附檔給你。
   - **OpenRouter**（預設）：用 `[image] model` 指定的模型（預設 `openai/gpt-5.4-image-2`），費用記在 `llm_calls`。
   - **Codex 方案**（`[image] provider = "codex"`）：用 ChatGPT 方案的額度，透過官方 Codex CLI 的 `$imagegen` 畫圖，再從 `~/.codex/generated_images/` 取出成品。這和用 Claude 訂閱一樣，只透過官方 CLI，不取出登入 token 直接打 API。VPS 上要先 `codex login`。
+- **語音**：`text_to_speech` 用 MiniMax（`t2a_v2`）把文字念成 mp3，存在 `media/tts/`，再用 `discord` 工具附檔給你。設定了 `MINIMAX_API_KEY` 才會啟用；模型、音色、區域在 `[tts]`。
 - **圖片**：直接交給模型看（原生多模態），所以要選吃圖片的模型；不吃圖片的模型不另外處理。
   - **來源**：你在 Discord 傳的圖片、`read_file` 讀到的圖片、瀏覽器截圖、niya 自己生的圖。
   - **存放**：圖片和附檔存在 `$NIYA_HOME/media/`，訊息只記路徑，每次送出前才讀檔、縮到長邊 1568 px 以內。

@@ -41,6 +41,12 @@ allow_private_urls = false   # 允許抓私有網段（雲端 metadata 位址永
 # model = "openai/gpt-5.4-image-2"   # 只有 openrouter 用得到
 # codex_command = "codex"
 
+[tts]
+# text_to_speech 用 MiniMax（設定了 MINIMAX_API_KEY 才會啟用）。
+model = "speech-2.8-hd"
+voice_id = "female-shaonv"   # 系統音色或自己複製的音色 ID
+region = "global"            # global：api.minimax.io；cn：api.minimaxi.com（兩邊的 key 不通用）
+
 [egress]
 # 讀過外部內容後，把本機資料傳到「陌生主機」的指令會先暫停，等主人回「好」。
 # 這裡列的主機（含子網域）永遠算已知。

@@ -41,6 +41,7 @@ from niya.tools.registry import OutputFilter, Tool, ToolContext, ToolOutcome, To
 from niya.tools.shell import ShellSession
 from niya.tools.skills import skill_tools
 from niya.tools.terminal import egress_guard, hardline_guard, terminal_tools
+from niya.tools.tts import Voice, tts_tools
 from niya.tools.url_safety import set_allow_private_urls
 from niya.tools.web import web_tools
 from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, SearchProvider, SearXNG, Tavily
@@ -213,6 +214,9 @@ def build_core_tools(
         tools += browser_tools(
             browser, workspace=settings.home / "cache" / "browser", media=media, secret_names=settings.secrets.keys(), secrets=settings.secrets.values()
         )
+    if minimax := settings.secrets.get("MINIMAX_API_KEY"):
+        voice = Voice(model=settings.tts_model, voice_id=settings.tts_voice, region=settings.tts_region, group_id=settings.tts_group_id)
+        tools += tts_tools(minimax, voice, http, media, recorder=db_recorder(db, clock))
     if token := settings.secrets.get("DISCORD_TOKEN"):
         rest = DiscordRest(token, http, guild_id=settings.discord_guild_id, owner_id=settings.discord_owner_id)
         tools += discord_tools(
