@@ -6,6 +6,7 @@ from pathlib import Path
 from claude_agent_sdk import (
     AssistantMessage,
     CLIConnectionError,
+    ProcessError,
     RateLimitEvent,
     RateLimitInfo,
     ResultMessage,
@@ -65,6 +66,8 @@ class FakeClient:
         if self.harness.fail_connect:
             self.harness.fail_connect = False
             raise CLIConnectionError("boom")
+        if self.options.resume in self.harness.missing_sessions:
+            raise ProcessError(f"Claude Code returned an error result: No conversation found with session ID: {self.options.resume}", exit_code=1)
 
     async def query(self, prompt):
         self.queries.append(prompt)
@@ -90,6 +93,7 @@ class Harness:
         self.clients = []
         self.agent = None
         self.fail_connect = False
+        self.missing_sessions = set()
 
     def factory(self, options):
         client = FakeClient(options, self)
@@ -208,6 +212,26 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.harness.clients[2].options.resume)
         self.assertEqual(self.harness.clients[2].options.system_prompt, "S2")
         self.assertEqual(restarted.conversation.engine_session_id, "new-session")
+
+    async def test_missing_transcript_starts_fresh_and_says_so(self):
+        self.conv.bind_engine("claude", "gone-session")
+        self.harness.missing_sessions.add("gone-session")
+        agent = self.agent([say("好，重新開始"), done(session_id="fresh-session")])
+        result = await agent.run_turn(self.owner("還記得嗎"))
+        self.assertEqual(result.text, "好，重新開始")
+        self.assertEqual([c.options.resume for c in self.harness.clients], ["gone-session", None])
+        prompt = self.harness.clients[1].queries[0]
+        self.assertTrue(prompt.startswith("[2026-10-29 (四) 10:00] user: 還記得嗎\n[2026-10-29 (四) 10:00] system: 這個 session 先前的對話接續不上了"))
+        self.assertEqual(self.conv.engine_session_id, "fresh-session")
+
+    async def test_relative_paths_reach_claude_code_as_absolute(self):
+        agent = ClaudeCodeAgent(
+            model="opus", tools=self.tools.registry, conversation=self.conv, clock=self.clock,
+            config_dir=Path("rel/claude"), cwd=Path("rel"), client_factory=self.harness.factory,
+        )
+        options = agent.options()
+        self.assertTrue(Path(options.cwd).is_absolute())
+        self.assertTrue(Path(options.env["CLAUDE_CONFIG_DIR"]).is_absolute())
 
     async def test_iteration_cap_refuses_more_tools(self):
         agent = self.agent(

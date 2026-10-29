@@ -80,6 +80,8 @@ def load_settings(
     egress = data.get("egress", {})
 
     home = Path(env["NIYA_HOME"]) if env.get("NIYA_HOME") else Path(paths["home"]) if paths.get("home") else default_home(env)
+    # Absolute from here on: subprocesses (Claude Code, the shell) run elsewhere, and the hardline only guards absolute paths.
+    home = home.expanduser().resolve()
     timezone = env.get("NIYA_TIMEZONE") or agent.get("timezone", "Asia/Taipei")
     try:
         ZoneInfo(timezone)

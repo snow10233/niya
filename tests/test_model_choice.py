@@ -47,6 +47,8 @@ class ParseTests(unittest.TestCase):
             self.assertEqual(settings.secrets, {"CLAUDE_CODE_OAUTH_TOKEN": "tok-123"})
             with self.assertRaises(ValueError):
                 load_settings(config, environ={"NIYA_HOME": tmp, "NIYA_PROVIDER": "gemini"})
+            relative = load_settings(config, environ={"NIYA_HOME": ".niya-test"})
+            self.assertEqual(relative.home, Path.cwd() / ".niya-test")
             config.write_text('[agent]\neffort = "turbo"\n')
             with self.assertRaises(ValueError):
                 load_settings(config, environ={"NIYA_HOME": tmp})
