@@ -146,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="niya", description="niya：會睡覺、會遺忘、有時間感的長期運行 agent")
     parser.add_argument("--config", type=Path, help="設定檔路徑，預設 $NIYA_CONFIG 或 /etc/niya/niya.toml")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("repl", help="在終端機跟 niya 對話（開發測試用）")
+    repl = sub.add_parser("repl", help="在終端機跟 niya 對話（開發測試用）")
+    repl.add_argument("--fake-clock", nargs="?", const="", metavar="'YYYY-MM-DD HH:MM'", help="用可以快轉的時鐘（/advance）測試睡眠和鬧鐘")
     sub.add_parser("doctor", help="檢查執行環境")
     model = sub.add_parser("model", help="查看或切換模型")
     model.add_argument("choice", nargs="*", help="例如 claude:sonnet、openrouter:<模型 ID>、search <關鍵字>、reset")
@@ -173,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         from niya.repl import run_repl
 
         try:
-            return asyncio.run(run_repl(settings))
+            return asyncio.run(run_repl(settings, fake_clock=args.fake_clock))
         except ValueError as exc:
             print(f"無法啟動：{exc}", file=sys.stderr)
             return 2

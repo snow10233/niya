@@ -17,7 +17,7 @@ import numpy as np
 
 from niya.clock import Clock
 from niya.db import Database
-from niya.memory.curve import DAY, DEFAULT, CurveParams, cue_threshold, initial_stability, r_at, recall_score
+from niya.memory.curve import DAY, DEFAULT, CurveParams, cue_threshold, initial_stability, r_at, recall_score, reinforce
 from niya.memory.search import match_expression, query_terms, search_messages
 from niya.memory.timefmt import exact_label, time_label
 from niya.memory.timeparse import parse_time_range
@@ -189,6 +189,121 @@ class MemoryEngine:
         if vectors is not None:
             self.index.add(memory_id, store_vector(self.db, memory_id, self.embedder.model, vectors[0]))
         return self.get(memory_id), True
+
+    # --- consolidation (used by sleep) -------------------------------------------------------------
+
+    def reload_index(self) -> None:
+        """After a rolled-back consolidation the in-memory index may hold rows that never got committed."""
+        self.index = VectorIndex.load(self.db, self.embedder.model) if self.embedder else VectorIndex()
+
+    def create(
+        self,
+        *,
+        kind: str,
+        content: str,
+        importance: int,
+        occurred_start: float | None,
+        occurred_end: float | None,
+        precision: str,
+        origin: str,
+        trust: str = "self",
+        state: str = "active",
+        stability: float | None = None,
+        level: str | None = None,
+        valid_from: float | None = None,
+        session_id: str | None = None,
+        vector: np.ndarray | None = None,
+    ) -> Memory:
+        importance = min(max(int(importance), 1), 10)
+        if trust == "external":
+            importance = min(importance, 6)
+        if stability is None:
+            stability = initial_stability(importance, self.params) * (self.params.level_mult.get(level or "", 1.0))
+        encoded = occurred_end if occurred_end is not None else occurred_start
+        cursor = self.db.execute(
+            "INSERT INTO memories(kind, level, content, importance, state, stability, last_review_at, occurred_start, occurred_end,"
+            " time_precision, valid_from, origin, trust, source_session_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                kind, level, content, importance, state, stability,
+                # The clock starts when it happened, not when sleep wrote it down; plans start from now.
+                min(encoded, self.clock.now()) if encoded is not None else self.clock.now(),
+                occurred_start, occurred_end, precision, valid_from, origin, trust, session_id, self.clock.now(),
+            ),
+        )
+        memory_id = cursor.lastrowid
+        if vector is not None and self.embedder is not None:
+            self.index.add(memory_id, store_vector(self.db, memory_id, self.embedder.model, vector))
+        return self.get(memory_id)
+
+    def add_link(self, src_id: int, dst_id: int, relation: str, weight: float | None = None) -> None:
+        if src_id != dst_id:
+            self.db.execute(
+                "INSERT OR IGNORE INTO memory_links(src_id, dst_id, relation, weight, created_at) VALUES (?, ?, ?, ?, ?)",
+                (src_id, dst_id, relation, weight, self.clock.now()),
+            )
+
+    def add_sources(self, memory_id: int, message_ids: Iterable[int]) -> None:
+        for message_id in message_ids:
+            self.db.execute("INSERT OR IGNORE INTO memory_sources(memory_id, message_id) VALUES (?, ?)", (memory_id, message_id))
+
+    def nearest(self, vector: np.ndarray, k: int = 5) -> list[tuple[Memory, float]]:
+        hits = self.index.search(vector, k)
+        found = self.load(i for i, _ in hits)
+        return [(found[i], score) for i, score in hits if i in found]
+
+    def review(self, memory: Memory, *, kind: str, ref_id: str, at: float, r: float | None = None) -> bool:
+        """Strengthen a memory that was really used (or met again) at `at`. Idempotent per (memory, kind, ref)."""
+        r = self.r(memory, at) if r is None else r
+        weight_kind = "relearn" if memory.state == "archived" and kind == "use" else kind
+        new_s = reinforce(memory.stability, r, weight_kind, self.params)
+        inserted = self.db.execute(
+            "INSERT OR IGNORE INTO memory_reviews(memory_id, kind, ref_id, ts, r_before, s_before, s_after) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (memory.id, kind, ref_id, at, r, memory.stability, new_s),
+        ).rowcount
+        if not inserted:
+            return False
+        state = "active" if memory.state == "archived" else memory.state
+        self.db.execute(
+            "UPDATE memories SET stability = ?, last_review_at = MAX(last_review_at, ?), review_count = review_count + 1, state = ? WHERE id = ?",
+            (new_s, at, state, memory.id),
+        )
+        if memory.state == "archived" and self.embedder is not None:
+            row = self.db.one("SELECT dim, vec FROM memory_vectors WHERE memory_id = ? AND model = ?", (memory.id, self.embedder.model))
+            if row:
+                self.index.add(memory.id, np.frombuffer(row["vec"], dtype="<f4").copy())
+        return True
+
+    def consolidate_labile(self, memory: Memory) -> None:
+        """A memory from the day survives its first night: it gets the full stability its importance earns."""
+        self.db.execute(
+            "UPDATE memories SET state = 'active', stability = MAX(stability, ?) WHERE id = ? AND state = 'labile'",
+            (initial_stability(memory.importance, self.params), memory.id),
+        )
+
+    def supersede(self, old: Memory, new: Memory, at: float) -> None:
+        """New information replaces an old fact; both keep their validity period for 'it used to be…' questions."""
+        self.db.execute(
+            "UPDATE memories SET state = 'superseded', superseded_by = ?, valid_until = ? WHERE id = ?",
+            (new.id, at, old.id),
+        )
+        self.db.execute("UPDATE memories SET valid_from = COALESCE(valid_from, ?) WHERE id = ?", (at, new.id))
+        self.add_link(new.id, old.id, "supersedes")
+        self.index.remove(old.id)
+
+    def prune(self) -> int:
+        """Archive what has faded below the line; returns how many."""
+        now = self.clock.now()
+        archived = 0
+        for row in self.db.query("SELECT * FROM memories WHERE state IN ('labile', 'active')"):
+            memory = _memory(row)
+            r = self.r(memory, now)
+            if r < self.params.archive_r:
+                self.db.execute("UPDATE memories SET state = 'archived', r_cached = ?, lapse_count = lapse_count + 1 WHERE id = ?", (r, memory.id))
+                self.index.remove(memory.id)
+                archived += 1
+            else:
+                self.db.execute("UPDATE memories SET r_cached = ? WHERE id = ?", (r, memory.id))
+        return archived
 
     # --- candidate search ----------------------------------------------------------------------------
 
@@ -458,6 +573,8 @@ _RELATIONS = {
     ("abstracts", "out"): "歸納自",
     ("abstracts", "in"): "被歸納成",
     ("alarm", "out"): "鬧鐘",
+    ("supersedes", "out"): "取代了",
+    ("supersedes", "in"): "後來改成",
 }
 _LABELS = {"owner": "user", "alarm": "alarm", "system": "system", "process": "process"}
 

@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 
 from niya.agent.budget import SOFT, over, percent
 from niya.agent.loop import TurnResult
-from niya.agent.render import format_ts
 from niya.control import ModelControl
 from niya.inbox import Inbox, InboundItem
 from niya.llm import LLMError
@@ -15,9 +14,8 @@ from niya.tools.egress import EgressGate
 log = logging.getLogger(__name__)
 
 Say = Callable[[str], Awaitable[None]]
-# Until sleep exists, a full context ends the session: (reason, percent used) -> start a new one.
-ContextFull = Callable[[str, int], Awaitable[None]]
-PROGRESS_CHARS = 800
+# (percent used, progress report if the turn was cut short) -> optionally a line to carry into the next turn.
+ContextFull = Callable[[int, str], Awaitable[str | None]]
 
 
 class Brain:
@@ -68,13 +66,9 @@ class Brain:
     async def check_context(self, agent, result: TurnResult) -> None:
         if self.on_context_full is None or not (result.context_full or over(result.prompt_tokens, agent.context_limit, SOFT)):
             return
-        used = percent(result.prompt_tokens, agent.context_limit)
-        ended = format_ts(self.inbox.clock.now(), agent.conversation.tz)
-        await self.on_context_full("context_full", used)
-        note = f"上一段對話在 {ended} 因為 context 快滿了（{used}%）而結束，換成新的 session。之前的內容不在 context 裡，需要時用 deep_recall 找。"
-        if result.context_full and result.text:
-            note += f"\n結束前你交代的進度：{result.text[:PROGRESS_CHARS]}"
-        self.carry.append(note)
+        note = await self.on_context_full(percent(result.prompt_tokens, agent.context_limit), result.text if result.context_full else "")
+        if note:
+            self.carry.append(note)
 
     def prepare(self, session_id: str, items: list[InboundItem]) -> list[InboundItem]:
         """Owner messages may answer a paused upload and mention hosts; the gate sees them before the model does."""
