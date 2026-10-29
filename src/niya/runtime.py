@@ -21,6 +21,7 @@ from niya.redact import Redactor
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
+from niya.tools.memory_tools import memory_tools
 from niya.tools.processes import BackgroundProcess, ProcessRegistry
 from niya.tools.protected_paths import ProtectedPaths
 from niya.tools.registry import OutputFilter, Tool, ToolContext, ToolOutcome, ToolRegistry
@@ -33,7 +34,10 @@ from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, Se
 CODE_DIR = Path(niya.__file__).resolve().parents[2]
 
 
-def system_prompt_factory(settings: Settings, *, channel: str, features: Collection[str] = ()) -> Callable[[], str]:
+FEATURES = ("recall",)
+
+
+def system_prompt_factory(settings: Settings, *, channel: str, features: Collection[str] = FEATURES) -> Callable[[], str]:
     def build() -> str:
         return build_system_prompt(
             persona=load_persona(settings.persona_path),
@@ -121,6 +125,7 @@ def build_core_tools(
         *terminal_tools(shell, processes, guards, is_fetch=detector.fetches_network),
         *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings))),
         *web_tools(search, extract, secrets=settings.secrets.values),
+        *memory_tools(db, settings.tz),
     ]
 
     def taint(ctx: ToolContext, outcome: ToolOutcome) -> None:

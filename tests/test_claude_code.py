@@ -217,7 +217,8 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.conv.bind_engine("claude", "gone-session")
         self.harness.missing_sessions.add("gone-session")
         agent = self.agent([say("好，重新開始"), done(session_id="fresh-session")])
-        result = await agent.run_turn(self.owner("還記得嗎"))
+        with self.assertLogs("niya.agent.claude_code", level="WARNING"):
+            result = await agent.run_turn(self.owner("還記得嗎"))
         self.assertEqual(result.text, "好，重新開始")
         self.assertEqual([c.options.resume for c in self.harness.clients], ["gone-session", None])
         prompt = self.harness.clients[1].queries[0]

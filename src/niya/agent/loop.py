@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from niya.agent.context import Conversation
 from niya.clock import Clock
-from niya.inbox import InboundItem
+from niya.inbox import InboundItem, turn_source
 from niya.llm import ChatResult
 from niya.tools.registry import ToolContext, ToolRegistry
 
@@ -77,7 +77,7 @@ class Agent:
             raise ValueError("一回合至少要有一則訊息。")
         conv = self.conversation
         turn_id = new_turn_id()
-        conv.start_turn(turn_id, source=items[0].speaker, ts=self.clock.now())
+        conv.start_turn(turn_id, source=turn_source(items), ts=self.clock.now())
         conv.add_user_items(turn_id, items)
         if conv.engine is None:
             conv.bind_engine(self.engine)

@@ -10,6 +10,7 @@ from niya.agent.render import render_history, strip_echoed_prefix
 from niya.db import Database
 from niya.inbox import InboundItem
 from niya.llm import ChatResult, ToolCall
+from niya.memory.episodic import assign_segment, close_session_segments, finish_segment_turn
 from niya.tools.registry import ToolOutcome
 
 
@@ -90,6 +91,7 @@ class Conversation:
 
     def end(self, *, now: float, reason: str) -> None:
         self.db.execute("UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?", (now, reason, self.session_id))
+        close_session_segments(self.db, self.session_id)
 
     def bind_engine(self, engine: str, engine_session_id: str | None = None) -> None:
         """A session runs on one engine for its whole life; Claude Code also needs its own ID to resume."""
@@ -107,11 +109,13 @@ class Conversation:
             "INSERT INTO turns(id, session_id, source, started_at, gap_s, recall_block) VALUES (?, ?, ?, ?, ?, ?)",
             (turn_id, self.session_id, source, ts, gap, recall_block),
         )
+        assign_segment(self.db, session_id=self.session_id, turn_id=turn_id, source=source, ts=ts)
         if recall_block:
             self.recall_blocks[turn_id] = recall_block
 
     def finish_turn(self, turn_id: str, *, ts: float) -> None:
         self.db.execute("UPDATE turns SET ended_at = ? WHERE id = ?", (ts, turn_id))
+        finish_segment_turn(self.db, turn_id=turn_id, ts=ts)
 
     def add_user_items(self, turn_id: str, items: Sequence[InboundItem]) -> None:
         for item in sorted(items, key=lambda i: i.ts):
