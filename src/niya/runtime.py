@@ -156,6 +156,7 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
             config_dir=settings.claude_config_dir,
             cwd=settings.home,
             max_iterations=settings.max_iterations,
+            max_context_tokens=settings.max_context_tokens,
             effort=effort,
             secrets=settings.secrets,
             on_turn_end=tools.egress.end_turn,
@@ -168,6 +169,7 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
         conversation=conversation,
         clock=clock,
         max_iterations=settings.max_iterations,
+        max_context_tokens=settings.max_context_tokens,
         effort=effort,
         on_turn_end=tools.egress.end_turn,
     )

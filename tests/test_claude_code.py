@@ -18,6 +18,7 @@ from claude_agent_sdk import (
 )
 from helpers import TZ, ts
 
+from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT
 from niya.agent.claude_code import CAP_TOOL_TEXT, ClaudeCodeAgent
 from niya.agent.context import Conversation
 from niya.clock import FakeClock
@@ -113,7 +114,7 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.conv = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
         self.harness = Harness()
 
-    def agent(self, *turns, conversation=None, max_iterations=40):
+    def agent(self, *turns, conversation=None, max_iterations=40, max_context_tokens=200_000):
         self.harness.script.extend(list(t) for t in turns)
         agent = ClaudeCodeAgent(
             model="opus",
@@ -123,6 +124,7 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
             config_dir=self.settings.claude_config_dir,
             cwd=self.settings.home,
             max_iterations=max_iterations,
+            max_context_tokens=max_context_tokens,
             secrets=self.settings.secrets,
             recorder=db_recorder(self.db, self.clock),
             client_factory=self.harness.factory,
@@ -249,6 +251,14 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("one", tool_rows[0].content)
         self.assertEqual(tool_rows[1].content, CAP_TOOL_TEXT)
         self.assertEqual(result.text, "先停在這")
+
+    async def test_full_context_stops_tools_and_flags_the_turn(self):
+        agent = self.agent([tool_round("m1", ("toolu_1", "terminal", {"command": "echo hi"})), say("先交代進度", "m2"), done()], max_context_tokens=1000)
+        result = await agent.run_turn(self.owner("跑"))
+        self.assertTrue(result.context_full)
+        self.assertEqual(self.conv.messages[2].content, CONTEXT_FULL_TOOL_TEXT)
+        agent.conversation = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
+        self.assertEqual(agent.last_prompt_tokens, 0)
 
     async def test_rate_limit_becomes_readable_error(self):
         info = RateLimitInfo(status="rejected", resets_at=int(ts("2026-10-29 15:00")), rate_limit_type="five_hour")

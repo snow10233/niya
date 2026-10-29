@@ -37,6 +37,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 
+from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT, HARD, over
 from niya.agent.context import Conversation
 from niya.agent.loop import TurnResult, new_turn_id
 from niya.agent.render import render_history
@@ -91,7 +92,9 @@ class _Turn:
     pending: _Pending | None = None
     calls: dict[str, tuple[ToolCall, str]] = field(default_factory=dict)
     iterations: int = 0
-    capped: bool = False
+    # Set once tools must stop: the text every further tool call gets instead of running.
+    cap_text: str | None = None
+    context_full: bool = False
     text: str = ""
     error: str | None = None
     rate_limit: RateLimitInfo | None = None
@@ -126,6 +129,7 @@ class ClaudeCodeAgent:
         config_dir: Path,
         cwd: Path,
         max_iterations: int = 40,
+        max_context_tokens: int = 200_000,
         effort: str | None = None,
         secrets: Mapping[str, str] | None = None,
         on_turn_end: Callable[[str], None] | None = None,
@@ -137,7 +141,6 @@ class ClaudeCodeAgent:
             raise ValueError("請先選擇模型（niya model）。")
         self.model = model
         self.tools = tools
-        self.conversation = conversation
         self.clock = clock
         self.config_dir = config_dir.resolve()
         self.cwd = cwd.resolve()
@@ -148,12 +151,23 @@ class ClaudeCodeAgent:
         self.on_rate_limit = on_rate_limit
         self.recorder = recorder
         self.client_factory = client_factory
-        self.last_prompt_tokens = 0
+        # Claude models have windows far beyond the configured cap, so the cap is the limit.
+        self.context_limit = max_context_tokens
+        self.conversation = conversation
         self.sdk_tools = [self._sdk_tool(tools.get(name)) for name in tools.names()]
         self._client: SDKClient | None = None
         self._client_session: str | None = None
         self._turn: _Turn | None = None
         self._stash: dict[tuple[str, str], deque[ToolOutcome]] = defaultdict(deque)
+
+    @property
+    def conversation(self) -> Conversation:
+        return self._conversation
+
+    @conversation.setter
+    def conversation(self, conversation: Conversation) -> None:
+        self._conversation = conversation
+        self.last_prompt_tokens = 0
 
     def options(self, resume: str | None = None) -> ClaudeAgentOptions:
         return ClaudeAgentOptions(
@@ -202,7 +216,7 @@ class ClaudeCodeAgent:
             conv.finish_turn(turn_id, ts=self.clock.now())
             if turn.error:
                 raise LLMError(turn.error, retryable=turn.rate_limit is not None)
-            return TurnResult(turn_id=turn_id, text=turn.text, iterations=turn.iterations, prompt_tokens=self.last_prompt_tokens)
+            return TurnResult(turn_id=turn_id, text=turn.text, iterations=turn.iterations, prompt_tokens=self.last_prompt_tokens, context_full=turn.context_full)
         except asyncio.CancelledError:
             self._end_abruptly(turn, "[已中斷]")
             with suppress(Exception):
@@ -297,6 +311,9 @@ class ClaudeCodeAgent:
                     turn.calls[block.id] = (call, _args_key(block.input))
             if message.usage:
                 self.last_prompt_tokens = _prompt_tokens(message.usage)
+                if over(self.last_prompt_tokens, self.context_limit, HARD) and not turn.context_full:
+                    turn.context_full = True
+                    turn.cap_text = CONTEXT_FULL_TOOL_TEXT
         elif isinstance(message, UserMessage):
             if message.parent_tool_use_id:
                 return
@@ -332,7 +349,8 @@ class ClaudeCodeAgent:
             turn.text = stored.content
         if pending.calls:
             turn.iterations += 1
-            turn.capped = turn.iterations >= self.max_iterations
+            if turn.iterations >= self.max_iterations and turn.cap_text is None:
+                turn.cap_text = CAP_TOOL_TEXT
 
     def _record_tool_result(self, turn: _Turn, block: ToolResultBlock) -> None:
         call, key = turn.calls.get(block.tool_use_id) or (ToolCall(id=block.tool_use_id, name="unknown", arguments="{}"), "")
@@ -382,8 +400,8 @@ class ClaudeCodeAgent:
         turn = self._turn
         if turn is None:
             return _tool_result("錯誤：目前沒有進行中的回合。", is_error=True)
-        if turn.capped:
-            return _tool_result(CAP_TOOL_TEXT, is_error=True)
+        if turn.cap_text is not None:
+            return _tool_result(turn.cap_text, is_error=True)
         call = ToolCall(id=f"cc-{secrets.token_hex(4)}", name=name, arguments=json.dumps(args, ensure_ascii=False))
         [outcome] = await self.tools.execute([call], turn.ctx)
         # The handler never learns Claude's tool_use_id; the stream's tool_result is matched back by name + args.
