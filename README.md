@@ -16,6 +16,10 @@
   - **全文搜尋**：`deep_recall` 用關鍵字搜尋以前的對話，中文和英文都能找；`recall_related(msg#id)` 看前後文。
   - **持久化 inbox**：主人的訊息、背景程序結束的通知都先進資料庫，重啟不會遺失，一次處理一回合。
   - **context 用量門檻**：回合中超過 90% 就停下工具、交代進度；回合結束時超過 75% 就開新 session。睡眠做好以後，這裡會改成提早睡。
+- **M4 鬧鐘**：
+  - niya 用 `alarm` 工具自己設提醒，支援一次性和 cron 重複。時間到了會叫醒 niya 跑一回合，去提醒你或去做某件事。
+  - niya 沒在運作時錯過的鬧鐘：提醒類 6 小時內、任務類 24 小時內補響，超過就讓 niya 告訴你錯過了。
+  - REPL 裡用 `/alarms` 查看，`/alarms cancel <id>` 取消。
 
 ## 模型與登入
 
@@ -66,7 +70,7 @@ uv run --env-file .env niya doctor
 uv run --env-file .env niya repl
 ```
 
-- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/effort` 調整思考強度，`/exit` 離開。
+- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/effort` 調整思考強度，`/alarms` 看鬧鐘，`/exit` 離開。
 - 資料存在 `NIYA_HOME`（`.env.example` 預設是專案目錄下的 `.niya/`）的 `niya.db`。VPS 上預設是 `/var/lib/niya`。
 - 設定檔可以用 `--config` 或 `NIYA_CONFIG` 指定，格式見 `niya.example.toml`。人格設定見 `persona.example.md`。
 - 密鑰只從環境變數讀，讀完就從環境中移除，不要寫進設定檔或提交到 Git。

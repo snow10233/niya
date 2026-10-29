@@ -54,7 +54,11 @@ def build_system_prompt(
             "ref（例如 msg#123）只給你自己查詢用，不要在回覆裡提到。"
         )
     if "alarm" in features:
-        rules.append("- 鬧鐘：主人提到有時間的未來計畫時，用 alarm 設提醒，並用 remember 記下來。")
+        remember = "，並用 remember 記下來" if "memory" in features else ""
+        rules.append(
+            f"- 鬧鐘：主人提到有時間的未來計畫時，自己判斷要設哪些提醒（例如前一天、出門前），用 alarm 設好{remember}。"
+            "alarm: 訊息是鬧鐘響了：「提醒主人」就提醒主人；「該做的事」就去做，做完沒有需要回報的就以 [SILENT] 開頭。"
+        )
     rules.append(f"- 輸出：回覆會送到{channel}。不需要回覆時，以 [SILENT] 開頭。")
 
     sections = [f"# 你是 niya\n{persona}", "# 運作方式\n" + "\n".join(rules), SAFETY_RULES.format(run_as=run_as)]

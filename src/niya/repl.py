@@ -9,11 +9,25 @@ from niya.inbox import Inbox
 from niya.model_choice import current_choice
 from niya.runtime import AnyAgent, build_agent, build_core_tools, needs_new_session, open_conversation, process_notice, restart_conversation, system_prompt_factory
 
-HELP = "指令：/new 開新 session、/model 查看或切換模型、/effort 調整思考強度、/egress list|allow <host>|remove <host>、/exit 離開"
+HELP = "指令：/new 開新 session、/model 查看或切換模型、/effort 調整思考強度、/alarms [cancel <id>] 鬧鐘、/egress list|allow <host>|remove <host>、/exit 離開"
 
 
 async def _notify(text: str) -> None:
     print(f"\n{text}")
+
+
+def _alarms_command(alarms, arg: str) -> str:
+    parts = arg.split()
+    if not parts:
+        active = alarms.active()
+        return "\n".join(alarms.describe(a) for a in active) if active else "目前沒有鬧鐘。"
+    if len(parts) == 2 and parts[0] == "cancel" and parts[1].lstrip("#").isdigit():
+        try:
+            cancelled = alarms.cancel(int(parts[1].lstrip("#")))
+        except ValueError as exc:
+            return str(exc)
+        return f"已取消 #{cancelled.id}「{cancelled.title}」"
+    return "用法：/alarms | /alarms cancel <id>"
 
 
 def _egress_command(gate, line: str) -> str:
@@ -50,7 +64,7 @@ async def run_repl(settings: Settings) -> int:
     choice = current_choice(db, settings)[0]
     conv = open_conversation(db, settings, clock, prompt)
     control: ModelControl | None = None
-    brain_task: asyncio.Task | None = None
+    tasks: list[asyncio.Task] = []
     try:
         agent: AnyAgent = build_agent(settings, db, clock, tools, conv, choice)
         if needs_new_session(conv, choice):
@@ -64,7 +78,7 @@ async def run_repl(settings: Settings) -> int:
             print(f"\n（context 用了 {used}%，先開新 session {agent.conversation.session_id}。之前的對話都在資料庫裡，niya 用 deep_recall 想得起來。）")
 
         brain = Brain(inbox=inbox, control=control, egress=tools.egress, reply=_say, report=_report, on_context_full=context_full)
-        brain_task = asyncio.create_task(brain.run())
+        tasks = [asyncio.create_task(brain.run()), asyncio.create_task(tools.alarms.run(inbox))]
         print(f"niya REPL（session {agent.conversation.session_id}，{control.status()}）。\n{HELP}")
         if inbox.pending():
             print(f"（還有 {len(inbox.pending())} 則沒處理完的訊息，先交給 niya）")
@@ -91,15 +105,18 @@ async def run_repl(settings: Settings) -> int:
                         agent.conversation = restart_conversation(agent.conversation, settings, clock, prompt, reason="manual")
                         print(f"已開新 session：{agent.conversation.session_id}")
                 continue
+            if command == "/alarms":
+                print(_alarms_command(tools.alarms, arg))
+                continue
             if command == "/egress":
                 print(_egress_command(tools.egress, line))
                 continue
             inbox.put("owner", line)
             await brain.idle()
     finally:
-        if brain_task is not None:
-            brain_task.cancel()
-            await asyncio.gather(brain_task, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         if control is not None:
             await control.agent.aclose()
         await tools.close()

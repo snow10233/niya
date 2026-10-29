@@ -11,6 +11,7 @@ from niya.agent.claude_code import ClaudeCodeAgent
 from niya.agent.context import Conversation
 from niya.agent.loop import Agent
 from niya.agent.prompts import build_system_prompt, load_persona
+from niya.alarms import Alarms
 from niya.agent.sanitize import neutralize, wrap_untrusted
 from niya.clock import Clock
 from niya.config import Settings
@@ -18,6 +19,7 @@ from niya.db import Database
 from niya.llm import OpenRouterClient, db_recorder
 from niya.model_choice import CLAUDE, ModelChoice, current_effort
 from niya.redact import Redactor
+from niya.tools.alarm_tool import alarm_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
@@ -34,7 +36,7 @@ from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, Se
 CODE_DIR = Path(niya.__file__).resolve().parents[2]
 
 
-FEATURES = ("recall",)
+FEATURES = ("recall", "alarm")
 
 
 def system_prompt_factory(settings: Settings, *, channel: str, features: Collection[str] = FEATURES) -> Callable[[], str]:
@@ -65,6 +67,7 @@ class CoreTools:
     shell: ShellSession
     processes: ProcessRegistry
     egress: EgressGate
+    alarms: Alarms
     clients: list[httpx.AsyncClient] = field(default_factory=list)
 
     async def close(self) -> None:
@@ -119,6 +122,7 @@ def build_core_tools(
     detector = EgressDetector()
     gate = EgressGate(db, now=clock.now, detector=detector, allow_hosts=settings.egress_allow_hosts, taint_scope=settings.egress_taint_scope, notify=notify_owner)
     guards = [hardline_guard(default_hardline(protected_dirs(settings))), egress_guard(gate, lambda: shell.cwd)]
+    alarms = Alarms(db, clock, settings.tz)
     http = httpx.AsyncClient(timeout=60)
     search, extract = web_providers(settings, http)
     tools = [
@@ -126,6 +130,7 @@ def build_core_tools(
         *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings))),
         *web_tools(search, extract, secrets=settings.secrets.values),
         *memory_tools(db, settings.tz),
+        *alarm_tools(alarms),
     ]
 
     def taint(ctx: ToolContext, outcome: ToolOutcome) -> None:
@@ -134,7 +139,7 @@ def build_core_tools(
 
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else [])
-    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, clients=clients)
+    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, clients=clients)
 
 
 AnyAgent = Agent | ClaudeCodeAgent
