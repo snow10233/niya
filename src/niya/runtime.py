@@ -140,6 +140,11 @@ def build_core_tools(
 AnyAgent = Agent | ClaudeCodeAgent
 
 
+def process_notice(bg: BackgroundProcess) -> str:
+    """What niya hears when a background job it asked to be told about finishes (no output: that goes through the tools)."""
+    return f"背景程序 {bg.id} 結束了（exit {bg.exit_code}）：{bg.command}\n需要的話用 process 工具看輸出。"
+
+
 def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools, conversation: Conversation, choice: ModelChoice) -> AnyAgent:
     effort = current_effort(db, settings)[0] or None
     if choice.provider == CLAUDE:

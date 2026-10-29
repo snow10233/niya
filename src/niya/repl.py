@@ -1,14 +1,13 @@
 import asyncio
 
+from niya.brain import Brain
 from niya.clock import RealClock
 from niya.config import Settings
-from niya.db import Database
-from niya.inbox import InboundItem
 from niya.control import ModelControl
-from niya.llm import LLMError
+from niya.db import Database
+from niya.inbox import Inbox
 from niya.model_choice import current_choice
-from niya.runtime import AnyAgent, build_agent, build_core_tools, needs_new_session, open_conversation, restart_conversation, system_prompt_factory
-from niya.tools.processes import BackgroundProcess
+from niya.runtime import AnyAgent, build_agent, build_core_tools, needs_new_session, open_conversation, process_notice, restart_conversation, system_prompt_factory
 
 HELP = "指令：/new 開新 session、/model 查看或切換模型、/effort 調整思考強度、/egress list|allow <host>|remove <host>、/exit 離開"
 
@@ -29,30 +28,41 @@ def _egress_command(gate, line: str) -> str:
     return "用法：/egress list | /egress allow <host> | /egress remove <host>"
 
 
-def _announce_exit(bg: BackgroundProcess) -> None:
-    print(f"\n[背景程序 {bg.id} 結束，exit {bg.exit_code}] {bg.command}")
-
-
 async def _confirm(question: str) -> bool:
     answer = await asyncio.to_thread(input, f"{question} [y/N] ")
     return answer.strip().lower() in ("y", "yes")
 
 
+async def _say(text: str) -> None:
+    print(f"\nniya> {text}")
+
+
+async def _report(text: str) -> None:
+    print(f"\n{text}")
+
+
 async def run_repl(settings: Settings) -> int:
     db = Database(settings.db_path)
     clock = RealClock()
+    inbox = Inbox(db, clock)
     prompt = system_prompt_factory(settings, channel="主人的終端機")
-    tools = build_core_tools(settings, db, clock, notify_owner=_notify, on_process_exit=_announce_exit)
+    tools = build_core_tools(settings, db, clock, notify_owner=_notify, on_process_exit=lambda bg: inbox.put("process", process_notice(bg)))
     choice = current_choice(db, settings)[0]
     conv = open_conversation(db, settings, clock, prompt)
     control: ModelControl | None = None
+    brain_task: asyncio.Task | None = None
     try:
         agent: AnyAgent = build_agent(settings, db, clock, tools, conv, choice)
         if needs_new_session(conv, choice):
             agent.conversation = restart_conversation(conv, settings, clock, prompt, reason="engine_switch")
             print(f"模型換成 {choice.provider}，已開新 session。")
         control = ModelControl(settings=settings, db=db, clock=clock, tools=tools, prompt=prompt, agent=agent, confirm=_confirm)
+        brain = Brain(inbox=inbox, control=control, egress=tools.egress, reply=_say, report=_report)
+        brain_task = asyncio.create_task(brain.run())
         print(f"niya REPL（session {agent.conversation.session_id}，{control.status()}）。\n{HELP}")
+        if inbox.pending():
+            print(f"（還有 {len(inbox.pending())} 則沒處理完的訊息，先交給 niya）")
+            await brain.idle()
 
         while True:
             try:
@@ -64,32 +74,26 @@ async def run_repl(settings: Settings) -> int:
             if line in ("/exit", "/quit"):
                 break
             command, _, arg = line.partition(" ")
-            if command == "/model":
-                print(await control.model(arg))
+            if command in ("/model", "/effort", "/new"):
+                async with brain.lock:
+                    if command == "/model":
+                        print(await control.model(arg))
+                    elif command == "/effort":
+                        print(await control.effort(arg))
+                    else:
+                        agent = control.agent
+                        agent.conversation = restart_conversation(agent.conversation, settings, clock, prompt, reason="manual")
+                        print(f"已開新 session：{agent.conversation.session_id}")
                 continue
-            if command == "/effort":
-                print(await control.effort(arg))
-                continue
-            agent = control.agent
-            if line == "/new":
-                agent.conversation = restart_conversation(agent.conversation, settings, clock, prompt, reason="manual")
-                print(f"已開新 session：{agent.conversation.session_id}")
-                continue
-            if line.startswith("/egress"):
+            if command == "/egress":
                 print(_egress_command(tools.egress, line))
                 continue
-            now = clock.now()
-            tools.egress.learn_owner_hosts(line)
-            notes = tools.egress.resolve_owner_reply(agent.conversation.session_id, line)
-            items = [InboundItem("system", note, now) for note in notes] + [InboundItem("owner", line, now)]
-            try:
-                result = await agent.run_turn(items)
-            except LLMError as exc:
-                print(f"[錯誤] {exc}")
-                continue
-            if not result.silent:
-                print(f"niya> {result.text}")
+            inbox.put("owner", line)
+            await brain.idle()
     finally:
+        if brain_task is not None:
+            brain_task.cancel()
+            await asyncio.gather(brain_task, return_exceptions=True)
         if control is not None:
             await control.agent.aclose()
         await tools.close()
