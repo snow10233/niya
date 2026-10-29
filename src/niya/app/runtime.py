@@ -1,4 +1,5 @@
 import getpass
+import json
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ from niya.skills.store import SkillStore
 from niya.sleep.llm import ClaudeCodeCompleter, Completer, DeepSeekCompleter, OpenRouterCompleter
 from niya.tools.alarm_tool import alarm_tools
 from niya.tools.delegate import delegate_tools
+from niya.tools.discord_tool import DiscordRest, discord_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
 from niya.tools.files import file_tools
 from niya.tools.hardline import default_hardline
@@ -108,6 +110,30 @@ def data_dirs(settings: Settings) -> list[Path]:
     return [settings.home, Path("/etc/niya")]
 
 
+def private_file(settings: Settings) -> Callable[[Path], str | None]:
+    """Files that must not be sent anywhere by a tool: niya's own data and config."""
+    dirs = [d.expanduser().resolve() for d in data_dirs(settings)]
+
+    def check(path: Path) -> str | None:
+        target = path.expanduser().resolve()
+        if any(target == d or d in target.parents for d in dirs):
+            return f"{target} 是 niya 自己的資料或設定。"
+        return None
+
+    return check
+
+
+def owner_channel(db: Database) -> Callable[[], str | None]:
+    """Where the owner last talked to niya (the Discord channel of their latest message)."""
+
+    def current() -> str | None:
+        row = db.one("SELECT meta FROM inbox WHERE source = 'owner' AND meta IS NOT NULL ORDER BY id DESC LIMIT 1")
+        channel = json.loads(row["meta"]).get("channel_id") if row else None
+        return str(channel) if channel else None
+
+    return current
+
+
 def output_filters(redactor: Redactor) -> list[OutputFilter]:
     def redact(text: str, tool: Tool, external: bool) -> str:
         return redactor(text, file_content=tool.output_kind == "file")
@@ -151,6 +177,7 @@ def build_core_tools(
     skills = SkillStore(settings.home / "skills", db, clock)
     http = httpx.AsyncClient(timeout=60)
     search, extract = web_providers(settings, http)
+    redactor = Redactor(settings.secrets.values())
     tools = [
         *terminal_tools(shell, processes, guards, is_fetch=detector.fetches_network),
         *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings))),
@@ -159,12 +186,17 @@ def build_core_tools(
         *alarm_tools(alarms),
         *skill_tools(skills),
     ]
+    if token := settings.secrets.get("DISCORD_TOKEN"):
+        rest = DiscordRest(token, http, guild_id=settings.discord_guild_id, owner_id=settings.discord_owner_id)
+        tools += discord_tools(
+            rest, tz=settings.tz, current_channel=owner_channel(db), gate=gate, redact=redactor, free_dirs=[settings.media_dir], protected=private_file(settings)
+        )
 
     def taint(ctx: ToolContext, outcome: ToolOutcome) -> None:
         if outcome.external_source:
             gate.mark_tainted(ctx.session_id, ctx.turn_id, outcome.external_source)
 
-    registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
+    registry = ToolRegistry(tools, output_filters=output_filters(redactor), on_outcome=taint)
     for tool in delegate_tools(subagent_runner(settings, db, clock, registry, gate)):
         registry.register(tool)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])

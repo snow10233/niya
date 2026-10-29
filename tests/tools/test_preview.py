@@ -37,6 +37,11 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(tool_view("mcp__weather__lookup", {"city": "台北"}).line(), "⚙️ mcp__weather__lookup...")
         self.assertEqual(tool_view("terminal", {"command": "ls"}).line(), "💻 terminal: ls")
 
+    def test_media_and_discord_tools(self):
+        self.assertEqual(preview("browser_exec", {"code": "# 搜尋 Amazon 的紙巾\nnew_tab('https://amazon.com')"}), "搜尋 Amazon 的紙巾")
+        self.assertEqual(preview("discord", {"action": "send", "channel_id": "123", "text": "早安"}), "send 123 早安")
+        self.assertEqual(tool_view("image_generate", {"prompt": "一隻貓"}), ToolView("🎨 image_generate", "一隻貓"))
+
 
 if __name__ == "__main__":
     unittest.main()

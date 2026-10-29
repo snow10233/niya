@@ -30,6 +30,10 @@ EMOJI = {
     "skill_view": "📚",
     "skill_manage": "📝",
     "delegate_task": "🔀",
+    "discord": "💬",
+    "browser_exec": "🌐",
+    "image_generate": "🎨",
+    "text_to_speech": "🔊",
 }
 DEFAULT_EMOJI = "⚙️"
 
@@ -46,6 +50,7 @@ PRIMARY_ARGS = {
     "deep_recall": "query",
     "recall_timeline": "since",
     "recall_related": "ref",
+    "image_generate": "prompt",
 }
 FALLBACK_ARGS = ("query", "text", "command", "path", "name", "prompt", "code", "goal")
 
@@ -124,6 +129,15 @@ def preview(name: str, args: dict[str, Any], max_len: int = PREVIEW_LEN) -> str:
             return _truncate(text, max_len)
         case "alarm":
             return _truncate(_oneline(_alarm(args)), max_len)
+        case "discord":
+            target = args.get("channel_id") or ""
+            text = args.get("text") or args.get("name") or ""
+            return _truncate(_oneline(" ".join(str(part) for part in (args.get("action") or "", target, text) if part)), max_len)
+        case "browser_exec":
+            # Hermes asks for a one-line comment describing the step; that is the label.
+            code = str(args.get("code") or "").strip()
+            first = code.splitlines()[0] if code else ""
+            return _truncate(_oneline(first.lstrip("#").strip() if first.startswith("#") else first), max_len)
     key = PRIMARY_ARGS.get(name) or next((k for k in FALLBACK_ARGS if k in args), None)
     if key is None or key not in args:
         return ""
