@@ -38,3 +38,13 @@ model = ""
 # 每次睡眠花在摘要和 REM 的上限（美元，依 API 價格估算；用 Claude 訂閱時是等值估算）。
 # 對話整理（NREM）一定會做完，不受這個限制。
 budget_usd = 1.0
+
+# MCP servers：啟動時連線，工具名稱是 mcp__<名稱>__<工具>。回傳的內容一律當作外部內容
+# （包上 <untrusted>、標記污染、遮蔽密鑰）。env 可以用 ${VAR} 引用環境變數，這些變數會被當成密鑰處理。
+# [mcp.servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# env = { GITHUB_PERSONAL_ACCESS_TOKEN = "${GITHUB_TOKEN}" }
+#
+# [mcp.servers.docs]
+# url = "https://example.com/mcp"

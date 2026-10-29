@@ -45,9 +45,10 @@ class Conversation:
         self.db = db
         self.session_id = session_id
         self.tz = tz
-        row = db.one("SELECT system_prompt, engine, engine_session_id FROM sessions WHERE id = ?", (session_id,))
+        row = db.one("SELECT kind, system_prompt, engine, engine_session_id FROM sessions WHERE id = ?", (session_id,))
         if row is None:
             raise ValueError(f"找不到 session：{session_id}")
+        self.kind: str = row["kind"]
         self.system_prompt: str = row["system_prompt"]
         self.engine: str | None = row["engine"]
         self.engine_session_id: str | None = row["engine_session_id"]
@@ -109,7 +110,9 @@ class Conversation:
             "INSERT INTO turns(id, session_id, source, started_at, gap_s, recall_block) VALUES (?, ?, ?, ?, ?, ?)",
             (turn_id, self.session_id, source, ts, gap, recall_block),
         )
-        assign_segment(self.db, session_id=self.session_id, turn_id=turn_id, source=source, ts=ts)
+        if self.kind == "main":
+            # Subagent work reaches memory through the parent's tool result, not as episodes of its own.
+            assign_segment(self.db, session_id=self.session_id, turn_id=turn_id, source=source, ts=ts)
         if recall_block:
             self.recall_blocks[turn_id] = recall_block
 

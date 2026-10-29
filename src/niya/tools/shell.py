@@ -64,6 +64,10 @@ class BoundedOutput:
 def clean_env(base: Mapping[str, str], secret_names: Iterable[str] = ()) -> dict[str, str]:
     blocked = set(secret_names) | set(SCRUBBED_ENV)
     env = {k: v for k, v in base.items() if k not in blocked}
+    if venv := base.get("VIRTUAL_ENV"):
+        # niya's own virtualenv stays out of the shell: `python3` and `pip` there are the system's.
+        own = str(Path(venv) / "bin")
+        env["PATH"] = os.pathsep.join(part for part in env.get("PATH", "").split(os.pathsep) if part and part != own)
     env.update(AGENT_ENV)
     return env
 

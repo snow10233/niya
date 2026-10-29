@@ -81,6 +81,7 @@ class Agent:
         effort: str | None = None,
         on_turn_end: Callable[[str], None] | None = None,
         recall: RecallHook | None = None,
+        tool_scope: tuple[str, str] | None = None,
     ) -> None:
         if not model:
             raise ValueError("請先設定模型（niya.toml 的 agent.model 或環境變數 NIYA_MODEL）。")
@@ -92,6 +93,8 @@ class Agent:
         self.effort = effort or None
         self.on_turn_end = on_turn_end
         self.recall = recall
+        # (session, turn) the tools act under. Subagents use the parent's: shared taint, and paused uploads the owner can approve.
+        self.tool_scope = tool_scope
         self.max_context_tokens = max_context_tokens
         self.context_limit = max_context_tokens
         self._limit_for: str | None = None
@@ -119,7 +122,7 @@ class Agent:
             conv.bind_engine(self.engine)
         await recall_into(self.recall, conv, turn_id, items)
         schemas = self.tools.schemas() or None
-        ctx = ToolContext(session_id=conv.session_id, turn_id=turn_id, now=self.clock.now)
+        ctx = ToolContext(*(self.tool_scope or (conv.session_id, turn_id)), now=self.clock.now)
         await self._refresh_limit()
         try:
             for iteration in range(1, self.max_iterations + 1):

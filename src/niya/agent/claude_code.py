@@ -135,6 +135,7 @@ class ClaudeCodeAgent:
         on_turn_end: Callable[[str], None] | None = None,
         on_rate_limit: Callable[[RateLimitInfo], None] | None = None,
         recall: RecallHook | None = None,
+        tool_scope: tuple[str, str] | None = None,
         recorder: Recorder | None = None,
         client_factory: Callable[[ClaudeAgentOptions], SDKClient] = ClaudeSDKClient,
     ) -> None:
@@ -151,6 +152,8 @@ class ClaudeCodeAgent:
         self.on_turn_end = on_turn_end
         self.on_rate_limit = on_rate_limit
         self.recall = recall
+        # (session, turn) the tools act under. Subagents use the parent's: shared taint, and paused uploads the owner can approve.
+        self.tool_scope = tool_scope
         self.recorder = recorder
         self.client_factory = client_factory
         # Claude models have windows far beyond the configured cap, so the cap is the limit.
@@ -205,7 +208,7 @@ class ClaudeCodeAgent:
         if conv.engine is None:
             conv.bind_engine(self.engine)
         await recall_into(self.recall, conv, turn_id, items)
-        turn = _Turn(turn_id, ToolContext(session_id=conv.session_id, turn_id=turn_id, now=self.clock.now))
+        turn = _Turn(turn_id, ToolContext(*(self.tool_scope or (conv.session_id, turn_id)), now=self.clock.now))
         self._turn = turn
         try:
             client = await self._ensure_client(turn)

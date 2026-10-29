@@ -75,5 +75,16 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(env["PAGER"], "cat")
 
 
+
+class CleanEnvTests(unittest.TestCase):
+    def test_niyas_own_virtualenv_is_left_out(self):
+        from niya.tools.shell import clean_env
+
+        env = clean_env({"VIRTUAL_ENV": "/opt/niya/.venv", "PATH": "/opt/niya/.venv/bin:/usr/local/bin:/usr/bin", "OPENROUTER_API_KEY": "k"}, ["OPENROUTER_API_KEY"])
+        self.assertEqual(env["PATH"], "/usr/local/bin:/usr/bin")
+        self.assertNotIn("VIRTUAL_ENV", env)
+        self.assertNotIn("OPENROUTER_API_KEY", env)
+
+
 if __name__ == "__main__":
     unittest.main()
