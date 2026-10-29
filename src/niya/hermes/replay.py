@@ -11,6 +11,7 @@ Progress is saved after every sleep: an interrupted replay picks up at the last 
 import json
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from typing import Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,7 @@ from niya.sleep.llm import Completer
 from niya.sleep.orchestrator import KIND_LABELS, RunStats, consolidate, slot_id, spent
 
 PROGRESS_KEY = "replay.at"
+EMBED_BATCH = 64
 KIND_AT = {3: "night", 13: "nap"}
 
 
@@ -101,8 +103,14 @@ class Replay:
         self.db.execute("UPDATE sleep_runs SET status = 'interrupted' WHERE status = 'running' AND reason = 'replay'")
         pending = list(turns)
         for at, kind in slots_between(max(done, turns[0]["started_at"] - 1), end, self.tz):
+            day = []
             while pending and pending[0]["started_at"] < at:
-                await self._turn(pending.pop(0), stats)
+                day.append(pending.pop(0))
+            # Memory only changes in sleep, so a whole waking stretch can be embedded in a few calls.
+            queries = [self._query(turn) for turn in day]
+            vectors = await self._embed([q for q in queries if q])
+            for turn, query in zip(day, queries):
+                await self._turn(turn, query, vectors.get(query), stats)
             await self._sleep(at, kind, stats)
             self.db.set_meta(PROGRESS_KEY, str(at))
         self._hand_over(until, present)
@@ -112,7 +120,27 @@ class Replay:
         if until is None:
             self.db.execute("UPDATE segments SET status = 'closed', closed_reason = 'import' WHERE status = 'replay' AND COALESCE(ended_at, started_at) <= ?", (present,))
 
-    async def _turn(self, turn, stats: ReplayStats) -> None:
+    def _query(self, turn) -> str | None:
+        """What the live recall hook would have searched with: the owner's words (leaning on the last ones if short)."""
+        rows = self.db.query("SELECT content FROM messages WHERE turn_id = ? AND role = 'user' AND speaker = 'owner' AND content IS NOT NULL ORDER BY id", (turn["id"],))
+        text = "\n".join(r["content"] for r in rows).strip()
+        if not text:
+            return None
+        previous = self.db.one(
+            "SELECT content FROM messages WHERE session_id = ? AND role = 'user' AND speaker = 'owner' AND content IS NOT NULL AND ts < ? ORDER BY ts DESC, id DESC LIMIT 1",
+            (turn["session_id"], turn["started_at"]),
+        )
+        return recall_query(text, previous["content"] if previous else None)
+
+    async def _embed(self, queries: list[str]) -> dict[str, Any]:
+        unique = list(dict.fromkeys(queries))
+        out: dict[str, Any] = {}
+        for i in range(0, len(unique), EMBED_BATCH):
+            batch = unique[i : i + EMBED_BATCH]
+            out.update(zip(batch, await self.engine.embed(batch) or ()))  # a failed batch falls back to one call per turn
+        return out
+
+    async def _turn(self, turn, query: str | None, vector, stats: ReplayStats) -> None:
         self.clock.set(turn["started_at"])
         stats.turns += 1
         session = self.db.one("SELECT system_prompt FROM sessions WHERE id = ?", (turn["session_id"],))
@@ -120,17 +148,9 @@ class Replay:
             # What niya would have woken up knowing: the session's core block.
             self.db.execute("UPDATE sessions SET system_prompt = ? WHERE id = ?", (self.engine.core_block() or "（沒有記憶區塊）", turn["session_id"]))
             session = self.db.one("SELECT system_prompt FROM sessions WHERE id = ?", (turn["session_id"],))
-        rows = self.db.query("SELECT content FROM messages WHERE turn_id = ? AND role = 'user' AND speaker = 'owner' AND content IS NOT NULL ORDER BY id", (turn["id"],))
-        text = "\n".join(r["content"] for r in rows).strip()
-        if not text:
+        if not query:
             return
-        previous = self.db.one(
-            "SELECT content FROM messages WHERE session_id = ? AND role = 'user' AND speaker = 'owner' AND content IS NOT NULL AND ts < ? ORDER BY ts DESC, id DESC LIMIT 1",
-            (turn["session_id"], turn["started_at"]),
-        )
-        result = await self.engine.recall(
-            recall_query(text, previous["content"] if previous else None), session_id=turn["session_id"], turn_id=turn["id"], exclude=core_ids(session["system_prompt"])
-        )
+        result = await self.engine.recall(query, session_id=turn["session_id"], turn_id=turn["id"], exclude=core_ids(session["system_prompt"]), vector=vector)
         stats.recalled += len(result.ids)
 
     def _last_wake(self) -> float:
