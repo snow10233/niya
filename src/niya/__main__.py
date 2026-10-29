@@ -6,31 +6,97 @@ from pathlib import Path
 from niya.config import load_settings
 
 
-def run_model_command(settings, choice: str | None) -> int:
+def _ask(question: str) -> str:
+    return input(question).strip() if sys.stdin.isatty() else ""
+
+
+def run_model_command(settings, words: list[str]) -> int:
+    import httpx
+
     from niya.db import Database
-    from niya.model_choice import clear_choice, configured_choice, current_choice, describe_options, parse_choice, save_choice
+    from niya.llm import list_models
+    from niya.model_choice import (
+        OPENROUTER,
+        ModelChoice,
+        clear_choice,
+        configured_choice,
+        current_choice,
+        describe_options,
+        format_models,
+        openrouter_problem,
+        parse_choice,
+        save_choice,
+        search_models,
+    )
 
     db = Database(settings.db_path)
     try:
-        if choice is None:
+        arg = " ".join(words).strip()
+        if not arg:
             current, source = current_choice(db, settings)
-            print(f"目前的模型：{current}（{source}）\n{describe_options()}")
-            if not sys.stdin.isatty():
+            print(f"目前的模型：{current}（{source}）\n{describe_options().replace('/model', 'niya model')}")
+            arg = _ask("輸入要切換的模型（直接 Enter 不變）：")
+            if not arg:
                 return 0
-            choice = input("輸入要切換的模型（直接 Enter 不變）：").strip()
-            if not choice:
-                return 0
-        if choice == "reset":
+        if arg == "reset":
             clear_choice(db)
             print(f"已改回設定檔的模型：{configured_choice(settings)}")
             return 0
         try:
-            new = parse_choice(choice)
-        except ValueError as exc:
-            print(exc, file=sys.stderr)
-            return 2
+            models = asyncio.run(list_models(base_url=settings.base_url)) if arg.startswith("search") or "/" in arg else None
+        except httpx.HTTPError:
+            models = None
+        if arg.startswith("search"):
+            keyword = arg.removeprefix("search").strip()
+            if models is None or not keyword:
+                print("用法：niya model search <關鍵字>（需要連得上 OpenRouter）", file=sys.stderr)
+                return 2
+            found = search_models(models, keyword)
+            if not found:
+                print(f"OpenRouter 上沒有符合「{keyword}」又支援工具呼叫的模型。")
+                return 1
+            print(format_models(found))
+            picked = _ask("輸入編號切換（直接 Enter 不變）：")
+            if not (picked.isdigit() and 1 <= int(picked) <= len(found)):
+                return 0
+            new = ModelChoice(OPENROUTER, found[int(picked) - 1].id)
+        else:
+            try:
+                new = parse_choice(arg)
+            except ValueError as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            if new.provider == OPENROUTER and models is not None and (problem := openrouter_problem(new.model, models)):
+                print(problem.replace("/model", "niya model"), file=sys.stderr)
+                return 2
         save_choice(db, new)
         print(f"已切換到 {new}。正在跑的 niya 要重新啟動才會套用；REPL 裡可以直接用 /model。")
+        return 0
+    finally:
+        db.close()
+
+
+def run_effort_command(settings, level: str | None) -> int:
+    from niya.db import Database
+    from niya.model_choice import EFFORT_HELP, EFFORTS, clear_effort, current_choice, current_effort, save_effort
+
+    db = Database(settings.db_path)
+    try:
+        provider = current_choice(db, settings)[0].provider
+        levels = EFFORTS[provider]
+        if level is None:
+            effort, source = current_effort(db, settings)
+            print(f"目前的思考強度：{effort or '預設'}（{source}）\n{EFFORT_HELP}\n{provider} 可用：{'、'.join(levels)}；reset 改回設定檔")
+            return 0
+        if level == "reset":
+            clear_effort(db)
+            print(f"已改回設定檔：{settings.effort or '預設'}")
+            return 0
+        if level not in levels:
+            print(f"{provider} 沒有「{level}」這個強度，可用：{'、'.join(levels)}", file=sys.stderr)
+            return 2
+        save_effort(db, level)
+        print(f"思考強度改成 {level}。正在跑的 niya 要重新啟動才會套用；REPL 裡可以直接用 /effort。")
         return 0
     finally:
         db.close()
@@ -43,7 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("repl", help="在終端機跟 niya 對話（開發測試用）")
     sub.add_parser("doctor", help="檢查執行環境")
     model = sub.add_parser("model", help="查看或切換模型")
-    model.add_argument("choice", nargs="?", help="例如 claude:opus、claude:sonnet、openrouter:<模型 ID>；reset 改回設定檔")
+    model.add_argument("choice", nargs="*", help="例如 claude:sonnet、openrouter:<模型 ID>、search <關鍵字>、reset")
+    effort = sub.add_parser("effort", help="查看或調整思考強度")
+    effort.add_argument("level", nargs="?", help="low / medium / high / xhigh / max（OpenRouter 另有 none、minimal）；reset 改回設定檔")
     login = sub.add_parser("login", help="用 Claude 訂閱登入（透過官方 Claude Code 的登入流程）")
     login.add_argument("--token", action="store_true", help="改產生長效 token，寫進環境變數 CLAUDE_CODE_OAUTH_TOKEN")
     sub.add_parser("logout", help="登出 Claude")
@@ -71,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(run_doctor(settings))
     if args.command == "model":
         return run_model_command(settings, args.choice)
+    if args.command == "effort":
+        return run_effort_command(settings, args.level)
     if args.command in ("login", "logout"):
         from niya.claude_cli import run_cli
 

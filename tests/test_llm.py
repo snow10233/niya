@@ -3,7 +3,7 @@ import unittest
 
 import httpx
 
-from niya.llm import LLMError, OpenRouterClient, apply_cache_control
+from niya.llm import LLMError, OpenRouterClient, apply_cache_control, list_models
 
 
 def chat_body(content="嗨", tool_calls=None, usage=None):
@@ -101,6 +101,35 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await client.context_length("other/model"))
         self.assertEqual(await client.context_length("test/model"), 200000)
         self.assertEqual(calls, ["/api/v1/models", "/api/v1/models"])
+
+
+    async def test_reasoning_effort_is_sent_only_when_set(self):
+        bodies = []
+
+        def handle(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json=chat_body())
+
+        client = self.make(handle)
+        await client.chat(model="m", messages=[{"role": "user", "content": "hi"}], reasoning={"effort": "high"})
+        await client.chat(model="m", messages=[{"role": "user", "content": "hi"}])
+        self.assertEqual(bodies[0]["reasoning"], {"effort": "high"})
+        self.assertNotIn("reasoning", bodies[1])
+
+    async def test_public_model_catalog(self):
+        def handle(request):
+            self.assertNotIn("Authorization", request.headers)
+            return httpx.Response(200, json={"data": [
+                {"id": "a/tools", "name": "A", "context_length": 1000000, "pricing": {"prompt": "0.000002", "completion": "0.00001"}, "supported_parameters": ["tools", "reasoning"]},
+                {"id": "b/plain", "name": "B", "context_length": 8192, "pricing": {}, "supported_parameters": ["temperature"]},
+            ]})
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        self.addAsyncCleanup(http.aclose)
+        models = await list_models(http=http)
+        self.assertEqual([(m.id, m.tools) for m in models], [("a/tools", True), ("b/plain", False)])
+        self.assertAlmostEqual(models[0].prompt_price, 2.0)
+        self.assertIsNone(models[1].completion_price)
 
 
 class CacheControlTests(unittest.TestCase):

@@ -15,7 +15,8 @@ SECRET_ENV = (
 )
 SYSTEM_CONFIG = Path("/etc/niya/niya.toml")
 PROVIDERS = ("claude", "openrouter")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# Claude Code takes low–max; OpenRouter also takes none and minimal.
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True)

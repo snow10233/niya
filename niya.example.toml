@@ -4,7 +4,7 @@
 [agent]
 provider = "claude"         # claude：Claude 訂閱（官方 Claude Code）；openrouter：OpenRouter
 model = "opus"              # claude：opus / sonnet / haiku / fable 或完整 ID；openrouter：例如 anthropic/claude-sonnet-4.6
-effort = ""                 # 只對 claude 有效：low / medium / high / xhigh / max，空白用模型預設
+effort = ""                 # 思考強度：low / medium / high / xhigh / max（openrouter 另有 none、minimal），空白用模型預設
 timezone = "Asia/Taipei"
 max_iterations = 40         # 一回合最多幾次工具呼叫
 max_context_tokens = 200000 # 和模型上限取較小值，是控制成本的旋鈕

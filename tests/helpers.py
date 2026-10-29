@@ -40,8 +40,9 @@ class FakeLLM:
         tool_choice: str | None = None,
         task: str = "chat",
         max_tokens: int | None = None,
+        reasoning: dict[str, Any] | None = None,
     ) -> ChatResult:
-        self.requests.append({"model": model, "messages": [dict(m) for m in messages], "tools": tools, "tool_choice": tool_choice, "task": task})
+        self.requests.append({"model": model, "messages": [dict(m) for m in messages], "tools": tools, "tool_choice": tool_choice, "task": task, "reasoning": reasoning})
         if self.block:
             await self.block.wait()
         if not self.results:

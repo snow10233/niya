@@ -43,6 +43,7 @@ from niya.claude_cli import claude_env
 from niya.clock import Clock
 from niya.inbox import InboundItem
 from niya.llm import CallRecord, ChatResult, LLMError, Recorder, ToolCall, Usage
+from niya.model_choice import effort_for
 from niya.tools.registry import Tool, ToolContext, ToolOutcome, ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -138,7 +139,7 @@ class ClaudeCodeAgent:
         self.config_dir = config_dir
         self.cwd = cwd
         self.max_iterations = max_iterations
-        self.effort = effort
+        self.effort = effort_for(ENGINE, effort or "")
         self.secrets = dict(secrets or {})
         self.on_turn_end = on_turn_end
         self.on_rate_limit = on_rate_limit
@@ -166,7 +167,7 @@ class ClaudeCodeAgent:
             verbatim_prompts=True,
             settings=json.dumps({"autoCompactEnabled": False}),
             model=self.model,
-            effort=self.effort or None,
+            effort=self.effort,
             max_turns=self.max_iterations + 5,
             cwd=str(self.cwd),
             env=claude_env(self.config_dir, self.secrets),
@@ -218,6 +219,13 @@ class ClaudeCodeAgent:
         self.model = model
         if self._client is not None:
             await self._client.set_model(model)
+
+    async def set_effort(self, effort: str | None) -> None:
+        effort = effort_for(ENGINE, effort or "")
+        if effort != self.effort:
+            self.effort = effort
+            # Effort is fixed when Claude Code starts; the next turn reconnects and resumes the same session.
+            await self._disconnect()
 
     async def aclose(self) -> None:
         await self._disconnect()

@@ -142,8 +142,11 @@ class OpenRouterClient:
         tool_choice: str | None = None,
         task: str = "chat",
         max_tokens: int | None = None,
+        reasoning: dict[str, Any] | None = None,
     ) -> ChatResult:
         body: dict[str, Any] = {"model": model, "messages": apply_cache_control(model, messages), "usage": {"include": True}}
+        if reasoning:
+            body["reasoning"] = reasoning
         if tools:
             body["tools"] = list(tools)
             body["parallel_tool_calls"] = True
@@ -233,6 +236,47 @@ class OpenRouterClient:
         if self.recorder:
             latency = int((time.monotonic() - started) * 1000)
             self.recorder(CallRecord(task=task, model=model, usage=usage, latency_ms=latency, ok=ok, error=error))
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    id: str
+    name: str
+    context_length: int | None
+    prompt_price: float | None  # USD per 1M tokens
+    completion_price: float | None
+    tools: bool
+
+
+def _per_million(value: Any) -> float | None:
+    try:
+        return float(value) * 1_000_000
+    except (TypeError, ValueError):
+        return None
+
+
+async def list_models(*, base_url: str = DEFAULT_BASE_URL, http: httpx.AsyncClient | None = None) -> list[ModelInfo]:
+    """OpenRouter's public model catalog; no key needed."""
+    client = http or httpx.AsyncClient(timeout=30)
+    try:
+        response = await client.get(f"{base_url.rstrip('/')}/models")
+        response.raise_for_status()
+        items = response.json().get("data") or []
+    finally:
+        if http is None:
+            await client.aclose()
+    return [
+        ModelInfo(
+            id=item["id"],
+            name=item.get("name") or item["id"],
+            context_length=item.get("context_length"),
+            prompt_price=_per_million((item.get("pricing") or {}).get("prompt")),
+            completion_price=_per_million((item.get("pricing") or {}).get("completion")),
+            tools="tools" in (item.get("supported_parameters") or ()),
+        )
+        for item in items
+        if item.get("id")
+    ]
 
 
 def db_recorder(db: Any, clock: Any) -> Recorder:
