@@ -34,6 +34,8 @@ class ToolText:
 Handler = Callable[[dict[str, Any], ToolContext], Awaitable["str | ToolText"]]
 # Applied to every tool result before truncation (secret redaction, sanitizing); the bool says it is external.
 OutputFilter = Callable[[str, "Tool", bool], str]
+# Told the tool name and arguments just before a call runs, so the owner can see what niya is doing.
+ToolStarted = Callable[[str, dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -78,12 +80,14 @@ class ToolRegistry:
         *,
         output_filters: Sequence[OutputFilter] = (),
         on_outcome: Callable[[ToolContext, "ToolOutcome"], None] | None = None,
+        on_start: ToolStarted | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
         self._schemas: list[dict[str, Any]] | None = None
         self.output_filters = list(output_filters)
         # Called as soon as each result exists, so e.g. taint from a web read applies to the very next call.
         self.on_outcome = on_outcome
+        self.on_start = on_start
         for tool in tools:
             self.register(tool)
 
@@ -100,7 +104,7 @@ class ToolRegistry:
         return sorted(self._tools)
 
     def subset(self, names: Iterable[str]) -> "ToolRegistry":
-        return ToolRegistry((self._tools[n] for n in names if n in self._tools), output_filters=self.output_filters, on_outcome=self.on_outcome)
+        return ToolRegistry((self._tools[n] for n in names if n in self._tools), output_filters=self.output_filters, on_outcome=self.on_outcome, on_start=self.on_start)
 
     def schemas(self) -> list[dict[str, Any]]:
         # Sorted and cached so the tools block stays byte-identical for prefix caching.
@@ -141,6 +145,11 @@ class ToolRegistry:
             return _error(call, f"參數不是合法的 JSON：{exc.msg}（第 {exc.pos} 個字元）")
         if not isinstance(args, dict):
             return _error(call, "參數必須是 JSON 物件。")
+        if self.on_start:
+            try:
+                self.on_start(call.name, args)
+            except Exception:
+                log.exception("tool progress for %s failed", call.name)
         try:
             async with asyncio.timeout(tool.timeout_s):
                 result = await tool.handler(args, ctx)

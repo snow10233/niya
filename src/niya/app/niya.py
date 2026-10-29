@@ -28,8 +28,10 @@ from niya.core.clock import Clock, FakeClock, RealClock
 from niya.core.config import Settings
 from niya.core.db import Database
 from niya.core.inbox import Inbox
+from niya.core.redact import Redactor
 from niya.llm.choice import current_choice
 from niya.sleep.orchestrator import KIND_LABELS, SleepOrchestrator
+from niya.tools.preview import tool_line
 
 Say = Callable[[str], Awaitable[None]]
 
@@ -41,6 +43,7 @@ class Interface:
     notice: Say  # system notices: paused uploads, waking up, errors
     confirm: Callable[[str], Awaitable[bool]]  # yes/no questions (e.g. switching provider)
     on_busy: Callable[[bool], Awaitable[None]] | None = None
+    progress: Callable[[str], None] | None = None  # one line per tool call, as it starts
 
 
 class Niya:
@@ -48,6 +51,7 @@ class Niya:
         self.settings = settings
         self.ui = interface
         self.clock = clock or RealClock()
+        self.redact = Redactor(settings.secrets.values())
         self.tasks: list[asyncio.Task] = []
         self.started = False
 
@@ -58,6 +62,8 @@ class Niya:
         self.db = Database(s.db_path)
         self.inbox = Inbox(self.db, self.clock)
         self.tools = build_core_tools(s, self.db, self.clock, notify_owner=ui.notice, on_process_exit=lambda bg: self.inbox.put("process", process_notice(bg)))
+        if s.tool_progress and ui.progress:
+            self.tools.registry.on_start = self._tool_started
         mcp = await connect_mcp(s, self.tools)
         notes += [f"MCP server {name} 連不上，先略過：{error}" for name, error in mcp.errors.items()]
         self.prompt = system_prompt_factory(s, channel=ui.channel, core_block=self.tools.memory.core_block, skills_index=self.tools.skills.index)
@@ -105,6 +111,11 @@ class Niya:
             self.db.close()
 
     # --- callbacks ---------------------------------------------------------------------------------
+
+    def _tool_started(self, name: str, args: dict[str, Any], sub: bool = False) -> None:
+        assert self.ui.progress is not None
+        line = tool_line(name, args)
+        self.ui.progress(self.redact(f"↳ {line}" if sub else line))
 
     async def _context_full(self, used: int, progress: str) -> None:
         await self.ui.say(f"有點累了，先睡一下，整理完就醒。（context 用了 {used}%）")

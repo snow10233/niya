@@ -23,6 +23,10 @@ async def _notice(text: str) -> None:
     print(f"\n{text}")
 
 
+def _progress(line: str) -> None:
+    print(f"  {line}")
+
+
 async def _confirm(question: str) -> bool:
     answer = await asyncio.to_thread(input, f"{question} [y/N] ")
     return answer.strip().lower() in ("y", "yes")
@@ -33,7 +37,7 @@ async def run_repl(settings: Settings, *, fake_clock: str | None = None) -> int:
     if fake_clock is not None:
         start = datetime.strptime(fake_clock, "%Y-%m-%d %H:%M").replace(tzinfo=settings.tz).timestamp() if fake_clock else RealClock().now()
         clock = FakeClock(start)
-    niya = Niya(settings, Interface(channel="主人的終端機", say=_say, notice=_notice, confirm=_confirm), clock=clock)
+    niya = Niya(settings, Interface(channel="主人的終端機", say=_say, notice=_notice, confirm=_confirm, progress=_progress), clock=clock)
     try:
         notes = await niya.start()
         print(f"niya REPL（session {niya.control.agent.conversation.session_id}，{niya.control.status()}）。\n{HELP}")

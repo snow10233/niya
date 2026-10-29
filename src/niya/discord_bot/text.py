@@ -1,4 +1,4 @@
-"""Pure helpers for the Discord bot: who niya listens to, how often it says it is asleep, splitting long replies."""
+"""Pure helpers for the Discord bot: who niya listens to, how often it says it is asleep, splitting long replies, tool progress."""
 
 DISCORD_LIMIT = 2000
 FILE_THRESHOLD = 6000  # longer replies go out as a .md attachment instead of a wall of messages
@@ -60,3 +60,22 @@ def chunk_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
     chunks.append("\n".join(current))
     total = len(chunks)
     return [f"{chunk}\n（{i}/{total}）" for i, chunk in enumerate(chunks, start=1)]
+
+
+_PROGRESS_FENCE = "```\n{}\n```"
+
+
+def render_progress(lines: list[str], limit: int = DISCORD_LIMIT) -> str:
+    """One turn's tool lines as a code block; once they no longer fit in one message, the oldest drop off."""
+    safe = [line.replace("```", "ˋˋˋ") for line in lines]
+    budget = limit - len(_PROGRESS_FENCE) - 30
+    kept: list[str] = []
+    for line in reversed(safe):
+        budget -= len(line) + 1
+        if budget < 0:
+            break
+        kept.append(line)
+    kept.reverse()
+    if hidden := len(safe) - len(kept):
+        kept.insert(0, f"…（前面還有 {hidden} 個）")
+    return _PROGRESS_FENCE.format("\n".join(kept))

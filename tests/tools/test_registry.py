@@ -97,5 +97,26 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(truncate("abc", 10), "abc")
 
 
+    async def test_on_start_sees_each_call_before_it_runs(self):
+        seen = []
+
+        async def run(args, ctx):
+            seen.append("ran")
+            return "ok"
+
+        def started(name, args):
+            seen.append((name, args))
+            if args.get("crash"):
+                raise RuntimeError("display broke")
+
+        registry = ToolRegistry([tool("run", run)], on_start=started)
+        with self.assertLogs("niya.tools.registry", level="ERROR"):
+            outcomes = await registry.execute(
+                [ToolCall("1", "run", '{"a": 1}'), ToolCall("2", "run", "{bad"), ToolCall("3", "run", '{"crash": true}')], self.ctx
+            )
+        self.assertEqual(seen, [("run", {"a": 1}), "ran", ("run", {"crash": True}), "ran"])  # a broken display never stops the tool
+        self.assertEqual([o.is_error for o in outcomes], [False, True, False])
+        self.assertIs(registry.subset(["run"]).on_start, started)
+
 if __name__ == "__main__":
     unittest.main()

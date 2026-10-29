@@ -81,6 +81,7 @@
 - **Discord**：
   - **收訊息**：`niya run` 以 Discord bot 常駐，只回應主人。私訊之外，也可以設定幾個頻道。其他帳號、bot 一律忽略。
   - **送訊息**：先遮蔽密鑰，再依 code block 切成 2000 字以內，超過 6000 字改傳 `.md` 附檔。niya 處理中會顯示「正在輸入」。
+  - **工具摘要**：niya 每呼叫一次工具，就多一行摘要，例如 `💻 terminal: systemctl status nginx`、`📖 read_file: /etc/hosts`。同一回合的摘要都在同一則訊息裡，有新的呼叫就編輯那則訊息；子 agent 的呼叫前面加 `↳`。不想看可以在 `niya.toml` 設 `[agent] tool_progress = false`。
   - **睡覺中**：自動回「睡覺中」（30 分鐘最多一次），狀態顯示 💤。
   - **指令**：`/status`、`/wake`、`/stop`、`/sleep`、`/dream`、`/alarms`、`/egress`、`/model`、`/effort`、`/new`，只有主人能用；另外也可以打 `!wake`。
 
@@ -133,6 +134,7 @@ uv run --env-file .env niya doctor
 uv run --env-file .env niya repl
 ```
 
+- niya 呼叫工具時，REPL 會先印一行摘要（例如 `💻 terminal: uptime`），再顯示回覆。
 - REPL 裡輸入 `/status` 看狀態、`/sleep` 去睡、`/wake` 叫醒、`/dream` 看夢境日誌、`/new` 開新 session、`/model` 切換模型、`/effort` 調整思考強度、`/alarms` 看鬧鐘、`/exit` 離開。
 - 資料存在 `NIYA_HOME`（`.env.example` 預設是專案目錄下的 `.niya/`）的 `niya.db`。VPS 上預設是 `/var/lib/niya`。
 - 設定檔可以用 `--config` 或 `NIYA_CONFIG` 指定，格式見 `niya.example.toml`。人格設定見 `persona.example.md`。

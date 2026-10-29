@@ -67,6 +67,7 @@ class Settings:
     base_url: str = "https://openrouter.ai/api/v1"
     max_iterations: int = 40
     max_context_tokens: int = 200_000
+    tool_progress: bool = True
     persona_path: Path | None = None
     searxng_url: str = ""
     allow_private_urls: bool = False
@@ -162,6 +163,7 @@ def load_settings(
         base_url=agent.get("base_url", "https://openrouter.ai/api/v1"),
         max_iterations=int(agent.get("max_iterations", 40)),
         max_context_tokens=int(agent.get("max_context_tokens", 200_000)),
+        tool_progress=bool(agent.get("tool_progress", True)),
         persona_path=Path(persona) if persona else None,
         searxng_url=env.get("SEARXNG_URL") or web.get("searxng_url", ""),
         allow_private_urls=bool(web.get("allow_private_urls", False)),
