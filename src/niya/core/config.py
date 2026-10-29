@@ -80,6 +80,7 @@ class Settings:
     sleep_effort: str = ""
     sleep_budget_usd: float = 1.0
     mcp_servers: tuple[McpServer, ...] = ()
+    browser_command: str = ""
     discord_owner_id: int = 0
     discord_channel_ids: frozenset[int] = frozenset()
     discord_guild_id: int = 0
@@ -135,6 +136,7 @@ def load_settings(
     memory = data.get("memory", {})
     sleep = data.get("sleep", {})
     discord = data.get("discord", {})
+    browser = data.get("browser", {})
 
     home = Path(env["NIYA_HOME"]) if env.get("NIYA_HOME") else Path(paths["home"]) if paths.get("home") else default_home(env)
     # Absolute from here on: subprocesses (Claude Code, the shell) run elsewhere, and the hardline only guards absolute paths.
@@ -184,6 +186,7 @@ def load_settings(
         sleep_effort=sleep_effort,
         sleep_budget_usd=float(sleep.get("budget_usd", 1.0)),
         mcp_servers=mcp_servers,
+        browser_command=str(browser.get("command", "")),
         discord_owner_id=int(env.get("NIYA_DISCORD_OWNER_ID") or discord.get("owner_id") or 0),
         discord_channel_ids=frozenset(int(c) for c in discord.get("channel_ids", ())),
         discord_guild_id=int(discord.get("guild_id") or 0),

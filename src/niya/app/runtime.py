@@ -18,6 +18,7 @@ from niya.core.clock import Clock
 from niya.core.config import Settings
 from niya.core.db import Database
 from niya.core.inbox import InboundItem
+from niya.core.media import MediaStore
 from niya.core.redact import Redactor
 from niya.llm.choice import CLAUDE, DEEPSEEK, SLEEP_PROVIDERS, ModelChoice, current_choice, current_effort, effort_for, parse_choice
 from niya.llm.openrouter import LLMError, OpenRouterClient, OpenRouterEmbedder, db_recorder
@@ -25,6 +26,7 @@ from niya.memory.engine import MemoryEngine, core_ids
 from niya.skills.store import SkillStore
 from niya.sleep.llm import ClaudeCodeCompleter, Completer, DeepSeekCompleter, OpenRouterCompleter
 from niya.tools.alarm_tool import alarm_tools
+from niya.tools.browser import browser_tools, find_cli
 from niya.tools.delegate import delegate_tools
 from niya.tools.discord_tool import DiscordRest, discord_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
@@ -186,6 +188,11 @@ def build_core_tools(
         *alarm_tools(alarms),
         *skill_tools(skills),
     ]
+    media = MediaStore(settings.media_dir, settings.tz)
+    if browser := find_cli(settings.browser_command):
+        tools += browser_tools(
+            browser, workspace=settings.home / "cache" / "browser", media=media, secret_names=settings.secrets.keys(), secrets=settings.secrets.values()
+        )
     if token := settings.secrets.get("DISCORD_TOKEN"):
         rest = DiscordRest(token, http, guild_id=settings.discord_guild_id, owner_id=settings.discord_owner_id)
         tools += discord_tools(

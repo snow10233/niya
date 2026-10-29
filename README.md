@@ -78,6 +78,10 @@
       - `env` 裡用 `${VAR}` 引用的環境變數，會和 niya 自己的密鑰一樣處理：讀完就從環境變數移除、在輸出中遮蔽，不會出現在 terminal 裡。
     - **連不上時**：某個 server 連不上，只會略過那一個，不影響啟動。
 - **terminal 的環境**：niya 的 terminal 不會帶到它自己的 virtualenv，所以 `python3`、`pip` 用的是系統的。
+- **瀏覽器**：`browser_exec` 把 Python 程式交給 [Browser Use CLI](https://browser-use.com) 執行，照 Hermes 的做法移植，只用本機的瀏覽器。
+  - **啟用**：VPS 上裝了 `browser-use`（`uv tool install browser-use`，再跑 `browser-use --doctor` 檢查）就會自動出現；也可以在 `[browser] command` 指定指令。
+  - **截圖**：程式裡呼叫 `capture_screenshot()`，截圖會複製到 `media/screenshots/`，直接附給模型看。
+  - **安全**：程式裡寫到的網址，開之前會先檢查，內網、本機位址和帶密鑰的網址都會擋下來。瀏覽器拿不到 niya 的密鑰，讀到的網頁一律當作外部內容。
 - **圖片**：直接交給模型看（原生多模態），所以要選吃圖片的模型；不吃圖片的模型不另外處理。
   - **來源**：你在 Discord 傳的圖片、`read_file` 讀到的圖片、瀏覽器截圖、niya 自己生的圖。
   - **存放**：圖片和附檔存在 `$NIYA_HOME/media/`，訊息只記路徑，每次送出前才讀檔、縮到長邊 1568 px 以內。
