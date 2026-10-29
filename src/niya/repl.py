@@ -59,8 +59,8 @@ async def run_repl(settings: Settings) -> int:
     db = Database(settings.db_path)
     clock = RealClock()
     inbox = Inbox(db, clock)
-    prompt = system_prompt_factory(settings, channel="主人的終端機")
     tools = build_core_tools(settings, db, clock, notify_owner=_notify, on_process_exit=lambda bg: inbox.put("process", process_notice(bg)))
+    prompt = system_prompt_factory(settings, channel="主人的終端機", core_block=tools.memory.core_block)
     choice = current_choice(db, settings)[0]
     conv = open_conversation(db, settings, clock, prompt)
     control: ModelControl | None = None

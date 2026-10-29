@@ -173,6 +173,100 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_alarms_due ON alarms(status, next_fire_at);
     """,
+    """
+    -- Long-term memory. Every memory fades on its own curve (stability in days, R computed on demand).
+    CREATE TABLE memories(
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      level TEXT,
+      content TEXT NOT NULL,
+      importance INTEGER NOT NULL,
+      state TEXT NOT NULL DEFAULT 'labile',
+      superseded_by INTEGER,
+      stability REAL NOT NULL,
+      last_review_at REAL NOT NULL,
+      review_count INTEGER NOT NULL DEFAULT 0,
+      lapse_count INTEGER NOT NULL DEFAULT 0,
+      occurred_start REAL,
+      occurred_end REAL,
+      time_precision TEXT NOT NULL DEFAULT 'unknown',
+      valid_from REAL,
+      valid_until REAL,
+      origin TEXT NOT NULL,
+      trust TEXT NOT NULL DEFAULT 'self',
+      source_session_id TEXT,
+      created_at REAL NOT NULL,
+      r_cached REAL
+    );
+    CREATE INDEX idx_memories_state ON memories(state, kind);
+    CREATE INDEX idx_memories_time ON memories(occurred_start, occurred_end);
+
+    CREATE VIRTUAL TABLE memories_tri USING fts5(content, content='memories', content_rowid='id', tokenize='trigram');
+    CREATE TRIGGER memories_tri_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_tri(rowid, content) VALUES (new.id, new.content);
+    END;
+    CREATE TRIGGER memories_tri_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO memories_tri(memories_tri, rowid, content) VALUES ('delete', old.id, old.content);
+    END;
+    CREATE TRIGGER memories_tri_au AFTER UPDATE OF content ON memories BEGIN
+      INSERT INTO memories_tri(memories_tri, rowid, content) VALUES ('delete', old.id, old.content);
+      INSERT INTO memories_tri(rowid, content) VALUES (new.id, new.content);
+    END;
+
+    CREATE TABLE memory_vectors(
+      memory_id INTEGER NOT NULL REFERENCES memories(id),
+      model TEXT NOT NULL,
+      dim INTEGER NOT NULL,
+      vec BLOB NOT NULL,
+      PRIMARY KEY(memory_id, model)
+    );
+    CREATE TABLE memory_links(
+      src_id INTEGER NOT NULL,
+      dst_id INTEGER NOT NULL,
+      relation TEXT NOT NULL,
+      weight REAL,
+      created_at REAL NOT NULL,
+      PRIMARY KEY(src_id, dst_id, relation)
+    );
+    CREATE INDEX idx_memory_links_dst ON memory_links(dst_id);
+    CREATE TABLE memory_sources(
+      memory_id INTEGER NOT NULL,
+      message_id INTEGER NOT NULL,
+      PRIMARY KEY(memory_id, message_id)
+    );
+    -- Every time a memory surfaces; sleep later judges which ones were really used.
+    CREATE TABLE retrieval_events(
+      id INTEGER PRIMARY KEY,
+      memory_id INTEGER NOT NULL,
+      channel TEXT NOT NULL,
+      session_id TEXT,
+      turn_id TEXT,
+      ts REAL NOT NULL,
+      r_at REAL,
+      verdict TEXT,
+      judged_at REAL
+    );
+    CREATE INDEX idx_retrieval_session ON retrieval_events(session_id, memory_id);
+    CREATE INDEX idx_retrieval_pending ON retrieval_events(verdict, turn_id);
+    CREATE TABLE memory_reviews(
+      id INTEGER PRIMARY KEY,
+      memory_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      ref_id TEXT NOT NULL,
+      ts REAL NOT NULL,
+      r_before REAL,
+      s_before REAL,
+      s_after REAL,
+      UNIQUE(memory_id, kind, ref_id)
+    );
+    CREATE TABLE core_blocks(
+      id INTEGER PRIMARY KEY,
+      created_at REAL NOT NULL,
+      content TEXT NOT NULL,
+      memory_ids TEXT
+    );
+    ALTER TABLE sessions ADD COLUMN core_block_id INTEGER;
+    """,
 ]
 
 

@@ -39,7 +39,7 @@ class RuntimeWiringTests(unittest.IsolatedAsyncioTestCase):
     async def test_tools_are_registered_and_terminal_output_is_redacted(self):
         self.assertEqual(
             self.tools.registry.names(),
-            ["alarm", "deep_recall", "patch", "process", "read_file", "recall_related", "search_files", "terminal", "web_extract", "web_search", "write_file"],
+            ["alarm", "deep_recall", "patch", "process", "read_file", "recall_related", "recall_timeline", "remember", "search_files", "terminal", "web_extract", "web_search", "write_file"],
         )
         secret_file = self.dir / "leak.txt"
         secret_file.write_text("key=sk-or-v1-supersecretvalue0001\n")

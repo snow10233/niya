@@ -48,3 +48,29 @@ class FakeLLM:
         if not self.results:
             raise AssertionError("FakeLLM ran out of scripted results")
         return self.results.pop(0)
+
+
+class HashEmbedder:
+    """Deterministic stand-in for an embedding model: texts sharing character bigrams point the same way."""
+
+    model = "hash@256"
+
+    def __init__(self, dim: int = 256) -> None:
+        self.dim = dim
+        self.calls = 0
+        self.fail = False
+
+    async def embed(self, texts):
+        import zlib
+
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("embedding service down")
+        out = []
+        for text in texts:
+            vec = [0.0] * self.dim
+            chars = [c for c in text.lower() if not c.isspace()]
+            for a, b in zip(chars, chars[1:]):
+                vec[zlib.crc32((a + b).encode()) % self.dim] += 1.0
+            out.append(vec)
+        return out

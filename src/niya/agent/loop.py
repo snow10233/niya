@@ -1,6 +1,7 @@
 import asyncio
+import logging
 import secrets
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -11,7 +12,24 @@ from niya.inbox import InboundItem, turn_source
 from niya.llm import ChatResult
 from niya.tools.registry import ToolContext, ToolRegistry
 
+log = logging.getLogger(__name__)
+
 ITERATION_LIMIT_NOTE = "已達到這一回合的工具呼叫上限，請直接向主人總結目前的進度。"
+# (conversation, turn_id, items) -> a <recalled_memories> block, or None when nothing comes to mind.
+RecallHook = Callable[[Conversation, str, Sequence[InboundItem]], Awaitable[str | None]]
+
+
+async def recall_into(hook: RecallHook | None, conv: Conversation, turn_id: str, items: Sequence[InboundItem]) -> None:
+    """Memories that come to mind are put on top of the turn; recall trouble never costs the turn."""
+    if hook is None:
+        return
+    try:
+        block = await hook(conv, turn_id, items)
+    except Exception:
+        log.exception("recall failed")
+        return
+    if block:
+        conv.set_recall_block(turn_id, block)
 
 
 class ChatModel(Protocol):
@@ -62,6 +80,7 @@ class Agent:
         max_context_tokens: int = 200_000,
         effort: str | None = None,
         on_turn_end: Callable[[str], None] | None = None,
+        recall: RecallHook | None = None,
     ) -> None:
         if not model:
             raise ValueError("請先設定模型（niya.toml 的 agent.model 或環境變數 NIYA_MODEL）。")
@@ -72,6 +91,7 @@ class Agent:
         self.max_iterations = max_iterations
         self.effort = effort or None
         self.on_turn_end = on_turn_end
+        self.recall = recall
         self.max_context_tokens = max_context_tokens
         self.context_limit = max_context_tokens
         self._limit_for: str | None = None
@@ -97,6 +117,7 @@ class Agent:
         conv.add_user_items(turn_id, items)
         if conv.engine is None:
             conv.bind_engine(self.engine)
+        await recall_into(self.recall, conv, turn_id, items)
         schemas = self.tools.schemas() or None
         ctx = ToolContext(session_id=conv.session_id, turn_id=turn_id, now=self.clock.now)
         await self._refresh_limit()

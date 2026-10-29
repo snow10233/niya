@@ -39,7 +39,7 @@ from claude_agent_sdk import (
 
 from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT, HARD, over
 from niya.agent.context import Conversation
-from niya.agent.loop import TurnResult, new_turn_id
+from niya.agent.loop import RecallHook, TurnResult, new_turn_id, recall_into
 from niya.agent.render import render_history
 from niya.claude_cli import claude_env
 from niya.clock import Clock
@@ -134,6 +134,7 @@ class ClaudeCodeAgent:
         secrets: Mapping[str, str] | None = None,
         on_turn_end: Callable[[str], None] | None = None,
         on_rate_limit: Callable[[RateLimitInfo], None] | None = None,
+        recall: RecallHook | None = None,
         recorder: Recorder | None = None,
         client_factory: Callable[[ClaudeAgentOptions], SDKClient] = ClaudeSDKClient,
     ) -> None:
@@ -149,6 +150,7 @@ class ClaudeCodeAgent:
         self.secrets = dict(secrets or {})
         self.on_turn_end = on_turn_end
         self.on_rate_limit = on_rate_limit
+        self.recall = recall
         self.recorder = recorder
         self.client_factory = client_factory
         # Claude models have windows far beyond the configured cap, so the cap is the limit.
@@ -202,6 +204,7 @@ class ClaudeCodeAgent:
         conv.add_user_items(turn_id, items)
         if conv.engine is None:
             conv.bind_engine(self.engine)
+        await recall_into(self.recall, conv, turn_id, items)
         turn = _Turn(turn_id, ToolContext(session_id=conv.session_id, turn_id=turn_id, now=self.clock.now))
         self._turn = turn
         try:

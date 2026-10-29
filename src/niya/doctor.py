@@ -37,6 +37,7 @@ async def run_doctor(settings: Settings) -> int:
     finally:
         db.close()
     checks.append(("模型", True, f"{choice}（{source}）"))
+    checks.append(("記憶 embedding", bool(settings.api_key), f"{settings.embedding_model}（{settings.embedding_dimensions} 維）" if settings.api_key else "沒有 OPENROUTER_API_KEY，記憶只能用全文搜尋"))
     if choice.provider == CLAUDE:
         cli = bundled_cli()
         checks.append(("Claude Code", cli is not None, f"{cli_version()} {cli}".strip() if cli else "找不到執行檔"))
@@ -57,6 +58,6 @@ async def run_doctor(settings: Settings) -> int:
 
     ok = True
     for name, passed, detail in checks:
-        ok &= passed or name.startswith("ripgrep")
+        ok &= passed or name.startswith(("ripgrep", "記憶"))
         print(f"{'✓' if passed else '✗'} {name}：{detail}")
     return 0 if ok else 1

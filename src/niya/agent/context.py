@@ -113,6 +113,11 @@ class Conversation:
         if recall_block:
             self.recall_blocks[turn_id] = recall_block
 
+    def set_recall_block(self, turn_id: str, block: str) -> None:
+        """Fixed once written: the block becomes part of the turn's first user message for good."""
+        self.db.execute("UPDATE turns SET recall_block = ? WHERE id = ?", (block, turn_id))
+        self.recall_blocks[turn_id] = block
+
     def finish_turn(self, turn_id: str, *, ts: float) -> None:
         self.db.execute("UPDATE turns SET ended_at = ? WHERE id = ?", (ts, turn_id))
         finish_segment_turn(self.db, turn_id=turn_id, ts=ts)
