@@ -19,6 +19,7 @@ from niya.app.niya import Interface, Niya
 from niya.core.clock import RealClock
 from niya.core.config import Settings
 from niya.core.redact import Redactor
+from niya.discord_bot.progress import ProgressBubble
 from niya.discord_bot.text import FILE_THRESHOLD, SleepReplyLimiter, chunk_message, should_handle
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,10 @@ class NiyaDiscord:
         self.client = discord.Client(intents=intents)
         self.tree = app_commands.CommandTree(self.client)
         self.redact = Redactor(settings.secrets.values())
-        self.niya = Niya(settings, Interface(channel="Discord", say=self.send, notice=self.send, confirm=self._confirm, on_busy=self._busy))
+        self.progress = ProgressBubble(self._target)
+        self.niya = Niya(
+            settings, Interface(channel="Discord", say=self.send, notice=self.send, confirm=self._confirm, on_busy=self._busy, progress=self.progress.add)
+        )
         self.channel: Any = None  # where the owner last talked; replies go there
         self.limiter = SleepReplyLimiter()
         self._typing: asyncio.Task | None = None
@@ -86,6 +90,7 @@ class NiyaDiscord:
         text = self.redact(text)
         if not text.strip():
             return
+        await self.progress.flush()
         channel = await self._target()
         if len(text) > FILE_THRESHOLD:
             await channel.send("內容比較長，放在附檔：", file=discord.File(io.BytesIO(text.encode("utf-8")), filename="niya.md"))
@@ -119,6 +124,7 @@ class NiyaDiscord:
             if self._typing is not None:
                 await asyncio.gather(self._typing, return_exceptions=True)
                 self._typing = None
+            await self.progress.finish()
 
     async def _confirm(self, question: str) -> bool:
         # A /model command typed by the owner already is the confirmation; say what it costs.

@@ -2,6 +2,7 @@ import getpass
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -250,8 +251,12 @@ def subagent_runner(settings: Settings, db: Database, clock: Clock, registry: To
                 gate.mark_tainted(tool_ctx.session_id, tool_ctx.turn_id, outcome.external_source)
                 external.append(outcome.external_source)
 
+        def started(name: str, args: dict[str, Any]) -> None:
+            if registry.on_start:
+                registry.on_start(name, args, sub=True)
+
         names = [n for n in registry.names() if n in SUBAGENT_TOOLS or n.startswith("mcp__")]
-        tools = ToolRegistry((registry.get(n) for n in names), output_filters=registry.output_filters, on_outcome=record)
+        tools = ToolRegistry((registry.get(n) for n in names), output_filters=registry.output_filters, on_outcome=record, on_start=started)
         prompt = build_subagent_prompt(timezone=settings.timezone, run_as=getpass.getuser())
         conv = Conversation.start_new(db, now=clock.now(), tz=settings.tz, system_prompt=prompt, kind="sub", parent_id=ctx.session_id)
         choice = current_choice(db, settings)[0]

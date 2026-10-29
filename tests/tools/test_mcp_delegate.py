@@ -157,5 +157,13 @@ class DelegateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({r.text for r in results}, {"ok"})
 
 
+    async def test_subagent_tool_calls_are_shown_as_its_own(self):
+        shown = []
+        self.registry.on_start = lambda name, args, sub=False: shown.append((name, sub))
+        run = self.runner(reply(None, ("c1", "web_extract", "{}")), reply("好了"))
+        [tool] = delegate_tools(run)
+        await tool.handler({"task": "讀新聞"}, ToolContext(session_id=self.parent.session_id, turn_id="t", now=self.clock.now))
+        self.assertEqual(shown, [("web_extract", True)])
+
 if __name__ == "__main__":
     unittest.main()
