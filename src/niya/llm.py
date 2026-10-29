@@ -170,8 +170,11 @@ class OpenRouterClient:
             reasoning_details=copy.deepcopy(message.get("reasoning_details")) or None,
         )
 
-    async def embed(self, *, model: str, texts: Sequence[str]) -> list[list[float]]:
-        data = await self._post("/embeddings", {"model": model, "input": list(texts)}, task="embed", model=model)
+    async def embed(self, *, model: str, texts: Sequence[str], dimensions: int | None = None) -> list[list[float]]:
+        body: dict[str, Any] = {"model": model, "input": list(texts)}
+        if dimensions:
+            body["dimensions"] = dimensions
+        data = await self._post("/embeddings", body, task="embed", model=model)
         items = sorted(data.get("data") or [], key=lambda item: item.get("index", 0))
         if len(items) != len(texts):
             raise LLMError(f"embedding 數量不符：送出 {len(texts)} 筆，收到 {len(items)} 筆。")
@@ -236,6 +239,19 @@ class OpenRouterClient:
         if self.recorder:
             latency = int((time.monotonic() - started) * 1000)
             self.recorder(CallRecord(task=task, model=model, usage=usage, latency_ms=latency, ok=ok, error=error))
+
+
+class OpenRouterEmbedder:
+    """Embeddings for memory. `model` names the vector space (model plus dimensions) stored with each vector."""
+
+    def __init__(self, client: OpenRouterClient, model: str, dimensions: int | None = None) -> None:
+        self.client = client
+        self.name = model
+        self.dimensions = dimensions
+        self.model = f"{model}@{dimensions}" if dimensions else model
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return await self.client.embed(model=self.name, texts=texts, dimensions=self.dimensions)
 
 
 @dataclass(frozen=True)

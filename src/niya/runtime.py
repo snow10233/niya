@@ -16,7 +16,9 @@ from niya.agent.sanitize import neutralize, wrap_untrusted
 from niya.clock import Clock
 from niya.config import Settings
 from niya.db import Database
-from niya.llm import OpenRouterClient, db_recorder
+from niya.inbox import InboundItem
+from niya.llm import OpenRouterClient, OpenRouterEmbedder, db_recorder
+from niya.memory.engine import MemoryEngine, core_ids
 from niya.model_choice import CLAUDE, ModelChoice, current_effort
 from niya.redact import Redactor
 from niya.tools.alarm_tool import alarm_tools
@@ -36,10 +38,16 @@ from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, Se
 CODE_DIR = Path(niya.__file__).resolve().parents[2]
 
 
-FEATURES = ("recall", "alarm")
+FEATURES = ("memory", "alarm")
 
 
-def system_prompt_factory(settings: Settings, *, channel: str, features: Collection[str] = FEATURES) -> Callable[[], str]:
+def system_prompt_factory(
+    settings: Settings,
+    *,
+    channel: str,
+    features: Collection[str] = FEATURES,
+    core_block: Callable[[], str] | None = None,
+) -> Callable[[], str]:
     def build() -> str:
         return build_system_prompt(
             persona=load_persona(settings.persona_path),
@@ -47,6 +55,7 @@ def system_prompt_factory(settings: Settings, *, channel: str, features: Collect
             channel=channel,
             run_as=getpass.getuser(),
             features=features,
+            core_block=core_block() if core_block else "",
         )
 
     return build
@@ -68,7 +77,8 @@ class CoreTools:
     processes: ProcessRegistry
     egress: EgressGate
     alarms: Alarms
-    clients: list[httpx.AsyncClient] = field(default_factory=list)
+    memory: MemoryEngine
+    clients: list[httpx.AsyncClient | OpenRouterClient] = field(default_factory=list)
 
     async def close(self) -> None:
         await self.processes.shutdown()
@@ -123,13 +133,16 @@ def build_core_tools(
     gate = EgressGate(db, now=clock.now, detector=detector, allow_hosts=settings.egress_allow_hosts, taint_scope=settings.egress_taint_scope, notify=notify_owner)
     guards = [hardline_guard(default_hardline(protected_dirs(settings))), egress_guard(gate, lambda: shell.cwd)]
     alarms = Alarms(db, clock, settings.tz)
+    embed_client = OpenRouterClient(settings.api_key, base_url=settings.base_url, recorder=db_recorder(db, clock)) if settings.api_key else None
+    embedder = OpenRouterEmbedder(embed_client, settings.embedding_model, settings.embedding_dimensions) if embed_client else None
+    memory = MemoryEngine(db, clock, settings.tz, embedder=embedder)
     http = httpx.AsyncClient(timeout=60)
     search, extract = web_providers(settings, http)
     tools = [
         *terminal_tools(shell, processes, guards, is_fetch=detector.fetches_network),
         *file_tools(lambda: shell.cwd, ProtectedPaths(data_dirs(settings))),
         *web_tools(search, extract, secrets=settings.secrets.values),
-        *memory_tools(db, settings.tz),
+        *memory_tools(memory),
         *alarm_tools(alarms),
     ]
 
@@ -138,11 +151,29 @@ def build_core_tools(
             gate.mark_tainted(ctx.session_id, ctx.turn_id, outcome.external_source)
 
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
-    clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else [])
-    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, clients=clients)
+    clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])
+    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, clients=clients)
 
 
 AnyAgent = Agent | ClaudeCodeAgent
+SHORT_QUERY = 12
+
+
+def recall_hook(memory: MemoryEngine):
+    async def recall(conv: Conversation, turn_id: str, items: list[InboundItem]) -> str | None:
+        text = "\n".join(item.content for item in items if item.speaker != "system").strip()
+        if not text:
+            return None
+        if len(text) < SHORT_QUERY:
+            # "那個呢？" means nothing alone; lean on what the owner said just before.
+            earlier = conv.messages[: len(conv.messages) - len(items)]
+            previous = next((m.content for m in reversed(earlier) if m.role == "user" and m.speaker == "owner" and m.content), None)
+            if previous:
+                text = f"{previous}\n{text}"
+        result = await memory.recall(text, session_id=conv.session_id, turn_id=turn_id, exclude=core_ids(conv.system_prompt))
+        return result.block
+
+    return recall
 
 
 def process_notice(bg: BackgroundProcess) -> str:
@@ -165,6 +196,7 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
             effort=effort,
             secrets=settings.secrets,
             on_turn_end=tools.egress.end_turn,
+            recall=recall_hook(tools.memory),
             recorder=db_recorder(db, clock),
         )
     return Agent(
@@ -177,6 +209,7 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
         max_context_tokens=settings.max_context_tokens,
         effort=effort,
         on_turn_end=tools.egress.end_turn,
+        recall=recall_hook(tools.memory),
     )
 
 

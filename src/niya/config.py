@@ -34,6 +34,8 @@ class Settings:
     allow_private_urls: bool = False
     egress_allow_hosts: tuple[str, ...] = ()
     egress_taint_scope: str = "session"
+    embedding_model: str = "perplexity/pplx-embed-v1-4b"
+    embedding_dimensions: int = 1024
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
@@ -78,6 +80,7 @@ def load_settings(
     paths = data.get("paths", {})
     web = data.get("web", {})
     egress = data.get("egress", {})
+    memory = data.get("memory", {})
 
     home = Path(env["NIYA_HOME"]) if env.get("NIYA_HOME") else Path(paths["home"]) if paths.get("home") else default_home(env)
     # Absolute from here on: subprocesses (Claude Code, the shell) run elsewhere, and the hardline only guards absolute paths.
@@ -114,5 +117,7 @@ def load_settings(
         allow_private_urls=bool(web.get("allow_private_urls", False)),
         egress_allow_hosts=tuple(egress.get("allow_hosts", ())),
         egress_taint_scope=egress.get("taint_scope", "session"),
+        embedding_model=memory.get("embedding_model", "perplexity/pplx-embed-v1-4b"),
+        embedding_dimensions=int(memory.get("embedding_dimensions", 1024)),
         secrets=secrets,
     )

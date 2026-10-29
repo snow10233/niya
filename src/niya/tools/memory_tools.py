@@ -1,40 +1,54 @@
-"""Deliberate recall: tools niya uses to go looking for things that are not in its context."""
+"""Memory tools: deliberately remembering, and going looking for what is not in the context."""
 
 import re
 from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from niya.agent.render import SPEAKER_LABELS, format_ts
-from niya.db import Database
-from niya.memory.search import search_messages
+from niya.memory.engine import KIND_LABELS, MemoryEngine
+from niya.memory.timeparse import parse_time_range
 from niya.tools.registry import Tool, ToolContext, ToolError
 
-CONTEXT_RADIUS = 5
-LINE_CHARS = 400
-
+REMEMBER_DESCRIPTION = (
+    "刻意記住一件事：主人的偏好、重要的事實、未來的計畫。白天記住的還不牢，要等睡覺整理才會變成長期記憶；"
+    "睡覺時也會自動從對話整理，所以只記真正重要、之後會用到的。"
+    "內容要能單獨看懂，相對時間（明天、下週三）要寫成絕對日期，因為過幾天再看就不準了。"
+    "kind：fact 事實、preference 偏好、intention 計畫（when 填計畫的時間）、event 發生過的事。"
+    "importance 1–10（10 是一輩子都該記得）。source：owner 主人說的、self 你自己觀察或推論的、external 來自網頁等外部內容。"
+)
+REMEMBER_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "content": {"type": "string", "description": "要記住的內容，一句完整的話"},
+        "kind": {"type": "string", "enum": ["fact", "preference", "intention", "event"], "default": "fact"},
+        "importance": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+        "source": {"type": "string", "enum": ["owner", "self", "external"], "default": "owner"},
+        "when": {"type": "string", "description": "這件事發生或預定的時間：YYYY-MM-DD 或 YYYY-MM-DD HH:MM"},
+    },
+    "required": ["content"],
+}
 DEEP_RECALL_DESCRIPTION = (
-    "搜尋過去的對話紀錄（不含目前這段對話，它已經在你眼前）。"
-    "用關鍵字查效果最好，例如「咖啡」「nginx 502」，不要整句話。"
-    "可以用 since / until 限定時間（YYYY-MM-DD 或 YYYY-MM-DD HH:MM）。"
-    "每筆結果都有 ref（msg#123），用 recall_related 可以看那則訊息的前後文。"
+    "用力回想：搜尋所有記憶（包括已經很淡、要很用力才想得起來的）和以前的對話，結果附精確時間。"
+    "用關鍵字查效果最好，例如「咖啡」「nginx 502」，不要整句話。since / until 可限定時間（YYYY-MM-DD 或 YYYY-MM-DD HH:MM）。"
+    "結果的 ref（m12 是記憶、msg#123 是原始訊息）可以交給 recall_related 往下挖。"
 )
 DEEP_RECALL_PARAMETERS = {
     "type": "object",
     "properties": {
         "query": {"type": "string", "description": "關鍵字，多個用空白分開"},
-        "since": {"type": "string", "description": "從這個時間開始（含），例如 2026-10-01"},
-        "until": {"type": "string", "description": "到這個時間為止（含），例如 2026-10-28 18:00"},
-        "limit": {"type": "integer", "description": "最多幾筆，預設 10", "default": 10},
+        "since": {"type": "string", "description": "從這個時間開始（含）"},
+        "until": {"type": "string", "description": "到這個時間為止（含）"},
     },
     "required": ["query"],
 }
-RELATED_DESCRIPTION = "從 deep_recall 找到的 ref 往下挖。msg#123：看那則訊息前後的對話。"
-RELATED_PARAMETERS = {
+TIMELINE_DESCRIPTION = "翻日記：列出某段時間發生的事和記下的事，附精確時間。since / until 可以是 YYYY-MM-DD，也可以是「上週」「昨天」「10 月」這類說法（只給 since 時代表那一段）。"
+TIMELINE_PARAMETERS = {
     "type": "object",
-    "properties": {"ref": {"type": "string", "description": "例如 msg#123"}},
-    "required": ["ref"],
+    "properties": {"since": {"type": "string"}, "until": {"type": "string"}},
+    "required": ["since"],
 }
+RELATED_DESCRIPTION = "從一個 ref 往下挖。m12：看這條記憶的來源、相關的記憶和當時的對話；msg#123：看那則訊息前後的對話。"
+RELATED_PARAMETERS = {"type": "object", "properties": {"ref": {"type": "string", "description": "例如 m12 或 msg#123"}}, "required": ["ref"]}
 _BOUND = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?\s*$")
 
 
@@ -59,65 +73,65 @@ def parse_bound(text: str | None, tz: ZoneInfo, *, end: bool = False) -> float |
     return moment.timestamp()
 
 
-def _clip(text: str, limit: int = LINE_CHARS) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    return text if len(text) <= limit else text[:limit] + "…"
+def _span(text: str, now: float, tz: ZoneInfo) -> tuple[float, float]:
+    """A date, a date and time, or a phrase like 「上週」."""
+    if _BOUND.match(text):
+        return parse_bound(text, tz), parse_bound(text, tz, end=True)
+    found = parse_time_range(text, now, tz)
+    if found is None:
+        raise ToolError(f"看不懂的時間：{text}")
+    return found
 
 
-def _speaker(row: Any) -> str:
-    if row["role"] == "assistant":
-        return "niya"
-    return SPEAKER_LABELS.get(row["speaker"] or "owner", row["speaker"] or "user")
+def memory_tools(engine: MemoryEngine) -> list[Tool]:
+    tz = engine.tz
 
+    async def remember(args: dict[str, Any], ctx: ToolContext) -> str:
+        when_text = args.get("when")
+        when = parse_bound(when_text, tz)
+        try:
+            memory, new = await engine.remember(
+                str(args.get("content") or ""),
+                kind=args.get("kind") or "fact",
+                importance=int(args.get("importance") or 5),
+                trust=args.get("source") or "owner",
+                occurred_start=when,
+                precision=None if when is None else "minute" if ":" in str(when_text) else "day",
+                session_id=ctx.session_id,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        if not new:
+            return f"這件事已經記得了（m{memory.id}）：{memory.content}"
+        return f"記住了（m{memory.id}，{KIND_LABELS[memory.kind]}，重要度 {memory.importance}）。睡覺整理後才會變成長期記憶。"
 
-def memory_tools(db: Database, tz: ZoneInfo) -> list[Tool]:
     async def deep_recall(args: dict[str, Any], ctx: ToolContext) -> str:
         query = str(args.get("query") or "").strip()
         if not query:
             raise ToolError("query 不能是空的。")
-        limit = max(1, min(int(args.get("limit") or 10), 20))
         since = parse_bound(args.get("since"), tz)
         until = parse_bound(args.get("until"), tz, end=True)
-        hits = search_messages(db, query, since=since, until=until, exclude_session=ctx.session_id, limit=limit)
-        if not hits:
-            return f"過去的對話裡找不到「{query}」。可以換個關鍵字，或放寬時間範圍。"
-        lines = [f"找到 {len(hits)} 筆以前的對話（都是先前的 session，不在目前的 context 裡）："]
-        lines += [f"- msg#{h.id} [{format_ts(h.ts, tz)}] {'niya' if h.role == 'assistant' else SPEAKER_LABELS.get(h.speaker or 'owner', 'user')}: {h.snippet}" for h in hits]
-        return "\n".join(lines)
+        return await engine.deep_recall(query, session_id=ctx.session_id, turn_id=ctx.turn_id, since=since, until=until)
+
+    async def recall_timeline(args: dict[str, Any], ctx: ToolContext) -> str:
+        now = ctx.now()
+        since, until = _span(str(args.get("since") or ""), now, tz)
+        if args.get("until"):
+            until = _span(str(args["until"]), now, tz)[1]
+        if until <= since:
+            raise ToolError("until 要在 since 之後。")
+        return engine.timeline(since, until, session_id=ctx.session_id, turn_id=ctx.turn_id)
 
     async def recall_related(args: dict[str, Any], ctx: ToolContext) -> str:
-        ref = str(args.get("ref") or "").strip()
-        match = re.fullmatch(r"msg#(\d+)", ref)
-        if not match:
-            if re.fullmatch(r"m\d+", ref):
-                raise ToolError("記憶（m 開頭的 ref）還沒啟用，目前只能查 msg#。")
-            raise ToolError(f"看不懂的 ref：{ref}（例如 msg#123）")
-        target = db.one("SELECT id, session_id FROM messages WHERE id = ?", (int(match.group(1)),))
-        if target is None:
-            raise ToolError(f"找不到 {ref}。")
-        before = db.query(
-            "SELECT * FROM messages WHERE session_id = ? AND id <= ? ORDER BY id DESC LIMIT ?",
-            (target["session_id"], target["id"], CONTEXT_RADIUS + 1),
-        )
-        after = db.query(
-            "SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id LIMIT ?",
-            (target["session_id"], target["id"], CONTEXT_RADIUS),
-        )
-        lines = [f"{ref} 前後的對話："]
-        for row in [*reversed(before), *after]:
-            mark = "→ " if row["id"] == target["id"] else "  "
-            stamp = format_ts(row["ts"], tz)
-            if row["role"] == "tool":
-                size = len(row["content"] or "")
-                lines.append(f"{mark}msg#{row['id']} [{stamp}]（{row['tool_name'] or '工具'} 的輸出，{size} 字）")
-            elif row["content"]:
-                lines.append(f"{mark}msg#{row['id']} [{stamp}] {_speaker(row)}: {_clip(row['content'])}")
-            else:
-                lines.append(f"{mark}msg#{row['id']} [{stamp}] niya 呼叫了工具")
-        return "\n".join(lines)
+        try:
+            return engine.related(str(args.get("ref") or "").strip(), session_id=ctx.session_id, turn_id=ctx.turn_id)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
 
+    options: dict[str, Any] = dict(toolset="memory", timeout_s=30, max_result_chars=8000)
     return [
-        Tool(name="deep_recall", description=DEEP_RECALL_DESCRIPTION, parameters=DEEP_RECALL_PARAMETERS, handler=deep_recall, toolset="memory", parallel_safe=True, timeout_s=30, max_result_chars=8000),
-        Tool(name="recall_related", description=RELATED_DESCRIPTION, parameters=RELATED_PARAMETERS, handler=recall_related, toolset="memory", parallel_safe=True, timeout_s=30, max_result_chars=8000),
+        Tool(name="remember", description=REMEMBER_DESCRIPTION, parameters=REMEMBER_PARAMETERS, handler=remember, **options),
+        Tool(name="deep_recall", description=DEEP_RECALL_DESCRIPTION, parameters=DEEP_RECALL_PARAMETERS, handler=deep_recall, parallel_safe=True, **options),
+        Tool(name="recall_timeline", description=TIMELINE_DESCRIPTION, parameters=TIMELINE_PARAMETERS, handler=recall_timeline, parallel_safe=True, **options),
+        Tool(name="recall_related", description=RELATED_DESCRIPTION, parameters=RELATED_PARAMETERS, handler=recall_related, parallel_safe=True, **options),
     ]
-

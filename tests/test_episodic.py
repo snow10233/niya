@@ -4,8 +4,10 @@ import unittest
 from helpers import TZ, ts
 
 from niya.agent.context import Conversation
+from niya.clock import FakeClock
 from niya.db import Database
 from niya.inbox import InboundItem, turn_source
+from niya.memory.engine import MemoryEngine
 from niya.memory.episodic import close_idle_segments
 from niya.memory.search import query_terms, search_messages
 from niya.tools.memory_tools import memory_tools, parse_bound
@@ -66,7 +68,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         old.end(now=ts("2026-10-28 12:00"), reason="manual")
         self.now = Conversation.start_new(self.db, now=ts("2026-10-29 09:00"), tz=TZ, system_prompt="S")
         self.now.add_user_items("t9", [InboundItem("owner", "nginx 現在怎樣", ts("2026-10-29 09:00"))])
-        self.registry = ToolRegistry(memory_tools(self.db, TZ))
+        self.registry = ToolRegistry(memory_tools(MemoryEngine(self.db, FakeClock(ts("2026-10-29 09:05")), TZ)))
         self.ctx = ToolContext(session_id=self.now.session_id, turn_id="t10", now=lambda: ts("2026-10-29 09:05"))
 
     def test_query_terms(self):
@@ -106,7 +108,7 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[2026-08-03 (一) 14:12] user: 網站又 502 了", lines[1])
         self.assertIn("（terminal 的輸出，", lines[2])
         self.assertTrue(lines[3].startswith(f"→ msg#{self.answer.id}"))
-        self.assertIn("找不到", (await self.call("deep_recall", query="火星")).content)
+        self.assertIn("想不起「火星」", (await self.call("deep_recall", query="火星")).content)
         self.assertTrue((await self.call("recall_related", ref="m12")).is_error)
 
 

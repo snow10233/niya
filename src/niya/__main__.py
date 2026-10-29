@@ -102,6 +102,46 @@ def run_effort_command(settings, level: str | None) -> int:
         db.close()
 
 
+def run_memory_command(settings, args) -> int:
+    from niya.clock import RealClock
+    from niya.db import Database
+    from niya.memory.curve import days_until
+    from niya.memory.engine import KIND_LABELS, MemoryEngine
+    from niya.memory.timefmt import exact_label
+
+    db = Database(settings.db_path)
+    engine = MemoryEngine(db, RealClock(), settings.tz)
+    try:
+        if args.memory_command == "list":
+            where = "" if args.all else "WHERE state IN ('labile', 'active')"
+            rows = db.query(f"SELECT id FROM memories {where} ORDER BY id")
+            memories = engine.load(r["id"] for r in rows)
+            if not memories:
+                print("還沒有記憶。")
+                return 0
+            print(f"{'id':>5} {'狀態':<9}{'類型':<4}{'重要':>3} {'S(天)':>7} {'R':>5}  內容")
+            for m in memories.values():
+                print(f"{m.id:>5} {m.state:<10}{KIND_LABELS[m.kind]:<4}{m.importance:>4} {m.stability:>7.2f} {engine.r(m):>5.2f}  {m.content[:60]}")
+            return 0
+        memory = engine.get(args.id)
+        if memory is None:
+            print(f"找不到 m{args.id}", file=sys.stderr)
+            return 1
+        r = engine.r(memory)
+        print(f"m{memory.id}（{KIND_LABELS[memory.kind]}，{memory.state}，重要度 {memory.importance}，來源 {memory.trust}/{memory.origin}）")
+        print(memory.content)
+        print(f"發生時間：{exact_label(memory.occurred_start, memory.occurred_end, settings.tz)}（精度 {memory.time_precision}）")
+        print(f"S = {memory.stability:.2f} 天，R = {r:.3f}，上次複習 {exact_label(memory.last_review_at, None, settings.tz)}")
+        print(f"再過 {max(days_until(0.30, memory.stability) - (engine.clock.now() - memory.last_review_at) / 86400, 0):.1f} 天會降到封存門檻")
+        events = db.query("SELECT channel, COUNT(*) AS n FROM retrieval_events WHERE memory_id = ? GROUP BY channel", (memory.id,))
+        if events:
+            print("浮現次數：" + "、".join(f"{e['channel']} {e['n']}" for e in events))
+        print(engine.related(f"m{memory.id}", session_id=None, turn_id=None).split("\n", 1)[1] if db.one("SELECT 1 FROM memory_links WHERE src_id = ? OR dst_id = ?", (memory.id, memory.id)) else "（沒有相關連結）")
+        return 0
+    finally:
+        db.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="niya", description="niya：會睡覺、會遺忘、有時間感的長期運行 agent")
     parser.add_argument("--config", type=Path, help="設定檔路徑，預設 $NIYA_CONFIG 或 /etc/niya/niya.toml")
@@ -115,6 +155,12 @@ def main(argv: list[str] | None = None) -> int:
     login = sub.add_parser("login", help="用 Claude 訂閱登入（透過官方 Claude Code 的登入流程）")
     login.add_argument("--token", action="store_true", help="改產生長效 token，寫進環境變數 CLAUDE_CODE_OAUTH_TOKEN")
     sub.add_parser("logout", help="登出 Claude")
+    memory = sub.add_parser("memory", help="查看記憶")
+    memory_sub = memory.add_subparsers(dest="memory_command", required=True)
+    listing = memory_sub.add_parser("list", help="列出記憶與目前的 R")
+    listing.add_argument("--all", action="store_true", help="連封存和被取代的也列出")
+    show = memory_sub.add_parser("show", help="看一條記憶的細節")
+    show.add_argument("id", type=int)
     args = parser.parse_args(argv)
 
     try:
@@ -141,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_model_command(settings, args.choice)
     if args.command == "effort":
         return run_effort_command(settings, args.level)
+    if args.command == "memory":
+        return run_memory_command(settings, args)
     if args.command in ("login", "logout"):
         from niya.claude_cli import run_cli
 

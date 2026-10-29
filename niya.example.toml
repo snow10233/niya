@@ -24,3 +24,9 @@ allow_private_urls = false   # 允許抓私有網段（雲端 metadata 位址永
 # 這裡列的主機（含子網域）永遠算已知。
 allow_hosts = ["github.com"]
 taint_scope = "session"     # session：讀過外部內容後到睡覺前都算；turn：只算那一回合
+
+[memory]
+# 記憶的 embedding（走 OpenRouter，需要 OPENROUTER_API_KEY；沒有的話只用全文搜尋）。
+# 換模型後舊記憶的向量要重算，回想門檻也是照這個模型校準的。
+embedding_model = "perplexity/pplx-embed-v1-4b"
+embedding_dimensions = 1024
