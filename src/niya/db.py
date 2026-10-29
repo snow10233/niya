@@ -267,6 +267,31 @@ MIGRATIONS: list[str] = [
     );
     ALTER TABLE sessions ADD COLUMN core_block_id INTEGER;
     """,
+    """
+    -- Sleep: each run consolidates what happened since the last wake, then (if done) clears the context.
+    CREATE TABLE sleep_runs(
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      slot TEXT,
+      replaced_slot TEXT,
+      session_id TEXT,
+      started_at REAL NOT NULL,
+      ended_at REAL,
+      status TEXT NOT NULL DEFAULT 'running',
+      stage TEXT,
+      stats TEXT,
+      cost_usd REAL
+    );
+    CREATE INDEX idx_sleep_runs_slot ON sleep_runs(slot);
+    CREATE TABLE dream_journal(
+      id INTEGER PRIMARY KEY,
+      sleep_run_id INTEGER NOT NULL,
+      created_at REAL NOT NULL,
+      content TEXT NOT NULL,
+      details TEXT
+    );
+    """,
 ]
 
 
@@ -339,6 +364,16 @@ class Database:
             "INSERT INTO state_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+    def backup(self, path: Path) -> None:
+        """A consistent copy taken while the database stays in use."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(path))
+        try:
+            self.conn.backup(target)
+        finally:
+            target.close()
+        path.chmod(0o600)
 
     def close(self) -> None:
         self.conn.close()

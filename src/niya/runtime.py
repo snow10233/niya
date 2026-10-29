@@ -19,7 +19,8 @@ from niya.db import Database
 from niya.inbox import InboundItem
 from niya.llm import OpenRouterClient, OpenRouterEmbedder, db_recorder
 from niya.memory.engine import MemoryEngine, core_ids
-from niya.model_choice import CLAUDE, ModelChoice, current_effort
+from niya.model_choice import CLAUDE, ModelChoice, current_choice, current_effort, parse_choice
+from niya.sleep.llm import ClaudeCodeCompleter, Completer, OpenRouterCompleter
 from niya.redact import Redactor
 from niya.tools.alarm_tool import alarm_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
@@ -38,7 +39,7 @@ from niya.tools.web_providers import Brave, ExtractProvider, NativeExtractor, Se
 CODE_DIR = Path(niya.__file__).resolve().parents[2]
 
 
-FEATURES = ("memory", "alarm")
+FEATURES = ("memory", "alarm", "sleep")
 
 
 def system_prompt_factory(
@@ -78,6 +79,7 @@ class CoreTools:
     egress: EgressGate
     alarms: Alarms
     memory: MemoryEngine
+    openrouter: OpenRouterClient | None = None
     clients: list[httpx.AsyncClient | OpenRouterClient] = field(default_factory=list)
 
     async def close(self) -> None:
@@ -152,7 +154,7 @@ def build_core_tools(
 
     registry = ToolRegistry(tools, output_filters=output_filters(Redactor(settings.secrets.values())), on_outcome=taint)
     clients = [http] + ([extract.http] if isinstance(extract, NativeExtractor) else []) + ([embed_client] if embed_client else [])
-    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, clients=clients)
+    return CoreTools(registry=registry, shell=shell, processes=processes, egress=gate, alarms=alarms, memory=memory, openrouter=embed_client, clients=clients)
 
 
 AnyAgent = Agent | ClaudeCodeAgent
@@ -216,3 +218,19 @@ def build_agent(settings: Settings, db: Database, clock: Clock, tools: CoreTools
 def needs_new_session(conversation: Conversation, choice: ModelChoice) -> bool:
     """History made on one engine cannot be handed to another, so switching provider starts a new session."""
     return conversation.engine is not None and conversation.engine != choice.provider and bool(conversation.messages)
+
+
+def sleep_completer(settings: Settings, db: Database, clock: Clock, tools: CoreTools) -> Callable[[], Completer]:
+    """Sleep uses [sleep] model if set, otherwise whatever niya is chatting with right now."""
+
+    def build() -> Completer:
+        choice = parse_choice(settings.sleep_model) if settings.sleep_model else current_choice(db, settings)[0]
+        if choice.provider == CLAUDE:
+            return ClaudeCodeCompleter(
+                choice.model, config_dir=settings.claude_config_dir, cwd=settings.home, secrets=settings.secrets, recorder=db_recorder(db, clock)
+            )
+        if tools.openrouter is None:
+            raise ValueError("睡眠整理要用 OpenRouter，但沒有設定 OPENROUTER_API_KEY。")
+        return OpenRouterCompleter(tools.openrouter, choice.model)
+
+    return build

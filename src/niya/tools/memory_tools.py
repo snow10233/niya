@@ -13,14 +13,15 @@ REMEMBER_DESCRIPTION = (
     "刻意記住一件事：主人的偏好、重要的事實、未來的計畫。白天記住的還不牢，要等睡覺整理才會變成長期記憶；"
     "睡覺時也會自動從對話整理，所以只記真正重要、之後會用到的。"
     "內容要能單獨看懂，相對時間（明天、下週三）要寫成絕對日期，因為過幾天再看就不準了。"
-    "kind：fact 事實、preference 偏好、intention 計畫（when 填計畫的時間）、event 發生過的事。"
+    "一次只記一件事。發生過的事不用記，睡覺時會自動整理成事件。"
+    "kind：fact 事實、preference 偏好、intention 計畫（when 填計畫的時間）。"
     "importance 1–10（10 是一輩子都該記得）。source：owner 主人說的、self 你自己觀察或推論的、external 來自網頁等外部內容。"
 )
 REMEMBER_PARAMETERS = {
     "type": "object",
     "properties": {
         "content": {"type": "string", "description": "要記住的內容，一句完整的話"},
-        "kind": {"type": "string", "enum": ["fact", "preference", "intention", "event"], "default": "fact"},
+        "kind": {"type": "string", "enum": ["fact", "preference", "intention"], "default": "fact"},
         "importance": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
         "source": {"type": "string", "enum": ["owner", "self", "external"], "default": "owner"},
         "when": {"type": "string", "description": "這件事發生或預定的時間：YYYY-MM-DD 或 YYYY-MM-DD HH:MM"},
@@ -90,9 +91,12 @@ def memory_tools(engine: MemoryEngine) -> list[Tool]:
         when_text = args.get("when")
         when = parse_bound(when_text, tz)
         try:
+            kind = args.get("kind") or "fact"
+            if kind not in ("fact", "preference", "intention"):
+                raise ValueError("remember 只記事實、偏好和計畫；發生過的事睡覺時會自動整理。")
             memory, new = await engine.remember(
                 str(args.get("content") or ""),
-                kind=args.get("kind") or "fact",
+                kind=kind,
                 importance=int(args.get("importance") or 5),
                 trust=args.get("source") or "owner",
                 occurred_start=when,

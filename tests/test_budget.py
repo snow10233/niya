@@ -69,9 +69,10 @@ class SoftLimitTests(unittest.IsolatedAsyncioTestCase):
         inbox = Inbox(db, clock)
         events = []
 
-        async def context_full(reason, used):
-            events.append((reason, used))
+        async def context_full(used, progress):
+            events.append(("context_full", used))
             agent.conversation = Conversation.start_new(db, now=clock.now(), tz=TZ, system_prompt="S")
+            return f"上一段對話在 2026-10-29 (四) 09:00 因為 context 快滿了（{used}%）而結束"
 
         async def ignore(text):
             pass

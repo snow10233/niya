@@ -8,6 +8,7 @@ task: 24 h); past that it is marked missed and niya is told, so it can own up to
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -219,11 +220,13 @@ class Alarms:
         row = self.db.one("SELECT MIN(next_fire_at) AS at FROM alarms WHERE status = 'scheduled'")
         return row["at"] if row else None
 
-    async def run(self, inbox: Inbox) -> None:
+    async def run(self, inbox: Inbox, on_fire: Callable[[list[Alarm]], Awaitable[None]] | None = None) -> None:
         """Ring alarms on time; wakes early whenever an alarm is added or moved."""
         while True:
             try:
-                self.fire_due(inbox, self.clock.now())
+                fired = self.fire_due(inbox, self.clock.now())
+                if fired and on_fire is not None:
+                    await on_fire([alarm for alarm in map(self.get, fired) if alarm is not None])
             except Exception:
                 log.exception("alarm tick failed")
             due = self.next_due()
