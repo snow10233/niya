@@ -123,6 +123,17 @@ class SleepTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.one("SELECT content FROM dream_journal")["content"], "我夢見和主人聊天。")
         self.assertEqual(len(list((self.dir / "backups").glob("niya-*.db"))), 1)
 
+    async def test_budget_stops_summaries_and_rem_but_never_nrem(self):
+        await self.chat("今天把 nginx 弄好了")
+        self.sleep.budget_usd = 0
+        self.clock.set(ts("2026-10-30 03:00"))
+        await self.sleep.tick()
+        await self.until_awake()
+        stats = json.loads(self.db.one("SELECT stats FROM sleep_runs")["stats"])
+        self.assertEqual((stats["events"], stats["summary"], stats["over_budget"], stats["finished"]), (1, False, True, True))
+        self.assertNotIn("day_summary", self.completer.calls)
+        self.assertEqual(len(self.woke), 1)
+
     async def test_missed_slots_are_not_made_up_later(self):
         self.clock.set(ts("2026-10-29 10:00"))  # 03:00 was 7 hours ago
         self.assertIsNone(self.sleep.due_slot(self.clock.now()))

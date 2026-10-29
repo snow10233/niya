@@ -23,7 +23,8 @@ from niya.memory.engine import MemoryEngine
 from niya.memory.episodic import close_idle_segments, close_session_segments
 from niya.sleep.llm import Completer
 from niya.sleep.nrem import Nrem, backfill_vectors
-from niya.sleep.summaries import day_summary, dream, last_night_wake
+from niya.sleep.rem import rem
+from niya.sleep.summaries import day_summary, dream, last_night_wake, period_summaries
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,10 @@ class RunStats:
     dropped: list[str] = field(default_factory=list)
     intentions: list[int] = field(default_factory=list)
     summary: bool = False
+    long_summaries: int = 0
+    linked: int = 0
+    insights: list[str] = field(default_factory=list)
+    over_budget: bool = False
     finished: bool = False
 
 
@@ -77,6 +82,7 @@ class SleepOrchestrator:
         wake_up: WakeUp,
         notify: Say,
         backups_dir=None,
+        budget_usd: float = 1.0,
     ) -> None:
         self.db = db
         self.clock = clock
@@ -88,6 +94,7 @@ class SleepOrchestrator:
         self.wake_up = wake_up
         self.notify = notify
         self.backups_dir = backups_dir
+        self.budget_usd = budget_usd
         self.task: asyncio.Task | None = None
         self.progress: str = ""
         self._wake_reason = "owner"
@@ -259,11 +266,25 @@ class SleepOrchestrator:
                     stats.dropped += result.dropped
                     stats.intentions += result.new_intentions
                 day_start = last_night_wake(self.engine)
+
+                def budget_left() -> bool:
+                    # NREM always finishes (clearing the context depends on it); summaries and REM stop at the budget.
+                    left = self._spent(started) < self.budget_usd
+                    stats.over_budget |= not left
+                    return left
+
                 if kind == "night":
                     self._stage(run_id, "summaries")
-                    stats.summary = await day_summary(self.engine, completer, since=day_start) is not None
+                    if budget_left():
+                        stats.summary = await day_summary(self.engine, completer, since=day_start) is not None
+                    if budget_left():
+                        stats.long_summaries = len(await period_summaries(self.engine, completer))
                 self._stage(run_id, "prune")
                 stats.archived = self.engine.prune()
+                if kind == "night" and budget_left():
+                    self._stage(run_id, "rem")
+                    rem_stats = await rem(self.engine, completer, budget_left=budget_left)
+                    stats.linked, stats.insights = rem_stats.linked, rem_stats.insights
                 remaining = self.db.one(
                     "SELECT COUNT(*) AS n FROM segments WHERE session_id = ? AND status <> 'consolidated'", (session_id,)
                 )["n"]
@@ -276,7 +297,7 @@ class SleepOrchestrator:
                         (day_start,),
                     )
                     titles = [r["content"].split("：")[0] for r in day if r["kind"] == "event"]
-                    learned = [r["content"] for r in day if r["kind"] != "event"]
+                    learned = [r["content"] for r in day if r["kind"] != "event"] + [f"（想到的規律）{i}" for i in stats.insights]
                     await dream(completer, run_id=run_id, titles=titles, memories=learned, archived=stats.archived, db=self.db, now=self.clock.now())
                 self._finish(run_id, "done", stats)
                 if stats.finished:
@@ -295,14 +316,21 @@ class SleepOrchestrator:
             self._finish(run_id, "failed", stats)
             self._set_resume(kind, "unfinished")
 
+    def _spent(self, since: float) -> float:
+        row = self.db.one("SELECT SUM(cost_usd) AS usd FROM llm_calls WHERE ts >= ? AND task <> 'chat'", (since,))
+        return row["usd"] or 0.0
+
     def _finish(self, run_id: int, status: str, stats: RunStats) -> None:
+        started = self.db.one("SELECT started_at FROM sleep_runs WHERE id = ?", (run_id,))["started_at"]
         self.db.execute(
-            "UPDATE sleep_runs SET status = ?, ended_at = ?, stats = ? WHERE id = ?",
-            (status, self.clock.now(), json.dumps(asdict(stats), ensure_ascii=False), run_id),
+            "UPDATE sleep_runs SET status = ?, ended_at = ?, stats = ?, cost_usd = ? WHERE id = ?",
+            (status, self.clock.now(), json.dumps(asdict(stats), ensure_ascii=False), self._spent(started), run_id),
         )
 
     def _wake_line(self, kind: str, reason: str, stats: RunStats) -> str:
         done = f"整理了 {stats.events} 個事件、{stats.memories} 條新記憶，封存 {stats.archived} 條"
+        if stats.insights:
+            done += f"，想到 {len(stats.insights)} 個規律"
         if reason == "overflow":
             line = f"提早睡醒來（context 滿了，{done}）。"
             if self.progress:

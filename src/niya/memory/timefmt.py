@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 WEEKDAYS = "一二三四五六日"
 # Finest to coarsest. "minute" is stored but never shown finer than the hour.
-PRECISIONS = ("minute", "hour", "day", "xun", "month", "season", "year", "unknown")
+PRECISIONS = ("minute", "hour", "day", "week", "xun", "month", "season", "year", "unknown")
 
 
 def precision_for_r(r: float, age_days: float) -> str:
@@ -77,6 +77,15 @@ def time_label(start: float | None, stored_precision: str, r: float, now: float,
         return f"{phrase}{part_of_day(when.hour)} {hour} 點"
     if precision == "day":
         return _day_phrase(d, today) or _absolute_day(d, today)
+    if precision == "week":
+        monday = d.toordinal() - d.weekday()
+        this_monday = today.toordinal() - today.weekday()
+        if monday == this_monday:
+            return "這週"
+        if monday == this_monday - 7:
+            return "上週"
+        start = date.fromordinal(monday)
+        return f"{_year_prefix(start, today)}{start.month}/{start.day} 那週"
     if precision == "xun":
         xun = "上旬" if d.day <= 10 else "中旬" if d.day <= 20 else "下旬"
         return f"{_year_prefix(d, today)}{d.month} 月{xun}"

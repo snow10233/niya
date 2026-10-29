@@ -143,6 +143,7 @@ async def run_repl(settings: Settings, *, fake_clock: str | None = None) -> int:
             wake_up=wake_up,
             notify=_notify,
             backups_dir=settings.home / "backups",
+            budget_usd=settings.sleep_budget_usd,
         )
 
         async def alarm_rang(fired) -> None:

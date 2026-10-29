@@ -37,6 +37,7 @@ class Settings:
     embedding_model: str = "perplexity/pplx-embed-v1-4b"
     embedding_dimensions: int = 1024
     sleep_model: str = ""
+    sleep_budget_usd: float = 1.0
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
@@ -122,5 +123,6 @@ def load_settings(
         embedding_model=memory.get("embedding_model", "perplexity/pplx-embed-v1-4b"),
         embedding_dimensions=int(memory.get("embedding_dimensions", 1024)),
         sleep_model=env.get("NIYA_SLEEP_MODEL") or sleep.get("model", ""),
+        sleep_budget_usd=float(sleep.get("budget_usd", 1.0)),
         secrets=secrets,
     )
