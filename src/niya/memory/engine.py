@@ -262,15 +262,20 @@ class MemoryEngine:
         ).rowcount
         if not inserted:
             return False
-        state = "active" if memory.state == "archived" else memory.state
+        # Only really using an archived memory brings it back; a nudge from below does not.
+        revived = memory.state == "archived" and kind == "use"
         self.db.execute(
             "UPDATE memories SET stability = ?, last_review_at = MAX(last_review_at, ?), review_count = review_count + 1, state = ? WHERE id = ?",
-            (new_s, at, state, memory.id),
+            (new_s, at, "active" if revived else memory.state, memory.id),
         )
-        if memory.state == "archived" and self.embedder is not None:
+        if revived and self.embedder is not None:
             row = self.db.one("SELECT dim, vec FROM memory_vectors WHERE memory_id = ? AND model = ?", (memory.id, self.embedder.model))
             if row:
                 self.index.add(memory.id, np.frombuffer(row["vec"], dtype="<f4").copy())
+        if kind in ("use", "parent"):
+            # Using an event also keeps the day (and week, month) it belongs to a little fresher.
+            for parent in self.load(r["dst_id"] for r in self.db.query("SELECT dst_id FROM memory_links WHERE src_id = ? AND relation = 'part_of'", (memory.id,))).values():
+                self.review(parent, kind="parent", ref_id=ref_id, at=at)
         return True
 
     def consolidate_labile(self, memory: Memory) -> None:
