@@ -53,9 +53,10 @@ class SkillStoreTests(unittest.IsolatedAsyncioTestCase):
         self.store.create("deploy-nginx", GOOD)
         self.assertIn("取代 1 處", self.store.patch("deploy-nginx", "apt install -y nginx", "apt update && apt install -y nginx"))
         self.assertIn("apt update", self.store.view("deploy-nginx"))
-        self.store.write_file("deploy-nginx", "references/ssl.md", "憑證每 90 天更新。")
-        self.assertIn("附檔：references/ssl.md", self.store.view("deploy-nginx"))
-        self.assertEqual(self.store.view("deploy-nginx", "references/ssl.md"), "憑證每 90 天更新。")
+        self.store.write_file("deploy-nginx", "references/ssl.md", "憑證每 90 天更新，用 ${SKILL_DIR}/scripts/renew.sh。")
+        folder = self.dir / "skills" / "deploy-nginx"
+        self.assertIn(f"附檔：references/ssl.md（用 file_path 讀；都在 {folder} 底下）", self.store.view("deploy-nginx"))
+        self.assertEqual(self.store.view("deploy-nginx", "references/ssl.md"), f"憑證每 90 天更新，用 {folder}/scripts/renew.sh。")
         for bad in ("../escape.md", "/etc/passwd", "notes.md"):
             with self.subTest(path=bad), self.assertRaises(SkillError):
                 self.store.write_file("deploy-nginx", bad, "x")
