@@ -33,6 +33,22 @@ class OpenRouterCompleter:
         return result.content or ""
 
 
+class DeepSeekCompleter(OpenRouterCompleter):
+    """DeepSeek's own API: thinking has to be switched on explicitly, and it only knows low, high and max."""
+
+    async def complete(self, *, system: str, prompt: str, task: str) -> str:
+        extra: dict[str, Any] = {"thinking": {"type": "enabled"}}
+        if self.effort:
+            extra["reasoning_effort"] = {"none": "low", "minimal": "low", "medium": "high", "xhigh": "max"}.get(self.effort, self.effort)
+        result = await self.client.chat(
+            model=self.model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            task=task,
+            extra=extra,
+        )
+        return result.content or ""
+
+
 class ClaudeCodeCompleter:
     """Each call is a fresh Claude Code session with no tools and a single turn."""
 

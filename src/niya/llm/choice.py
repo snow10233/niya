@@ -9,6 +9,9 @@ from niya.llm.openrouter import ModelInfo
 
 CLAUDE = "claude"
 OPENROUTER = "openrouter"
+DEEPSEEK = "deepseek"
+# DeepSeek's own API only does sleep work for now (one-shot, no tools), e.g. [sleep] model = "deepseek:deepseek-flash".
+SLEEP_PROVIDERS = (*PROVIDERS, DEEPSEEK)
 PROVIDER_LABELS = {
     CLAUDE: "Claude 訂閱，透過官方 Claude Code 執行（niya login 登入；有 ANTHROPIC_API_KEY 時改用 API 計費）",
     OPENROUTER: "OpenRouter（需要 OPENROUTER_API_KEY）",
@@ -20,7 +23,7 @@ CLAUDE_MODELS = {
     "haiku": "Claude Haiku 最新版",
     "fable": "Claude Fable 最新版（最強，用量消耗也最大）",
 }
-DEFAULT_MODELS = {CLAUDE: "opus"}
+DEFAULT_MODELS = {CLAUDE: "opus", DEEPSEEK: "deepseek-flash"}
 OPENROUTER_EXAMPLE = "openrouter:anthropic/claude-sonnet-5.5"
 META_KEY = "llm.choice"
 EFFORT_KEY = "llm.effort"
@@ -45,12 +48,12 @@ def infer_provider(model: str) -> str:
     return OPENROUTER if "/" in model else CLAUDE
 
 
-def parse_choice(text: str) -> ModelChoice:
+def parse_choice(text: str, providers: Sequence[str] = PROVIDERS) -> ModelChoice:
     """'claude:sonnet', 'openrouter:vendor/model', or a bare model whose provider is inferred."""
     text = text.strip()
     provider, sep, model = text.partition(":")
-    if not (sep and provider in PROVIDERS):
-        provider, model = (text, "") if text in PROVIDERS else (infer_provider(text), text)
+    if not (sep and provider in providers):
+        provider, model = (text, "") if text in providers else (infer_provider(text), text)
     model = model.strip() or DEFAULT_MODELS.get(provider, "")
     if not model:
         raise ValueError(f"{provider} 要指定模型，例如 {OPENROUTER_EXAMPLE}")

@@ -18,11 +18,11 @@ from niya.core.config import Settings
 from niya.core.db import Database
 from niya.core.inbox import InboundItem
 from niya.core.redact import Redactor
-from niya.llm.choice import CLAUDE, ModelChoice, current_choice, current_effort, parse_choice
+from niya.llm.choice import CLAUDE, DEEPSEEK, SLEEP_PROVIDERS, ModelChoice, current_choice, current_effort, effort_for, parse_choice
 from niya.llm.openrouter import LLMError, OpenRouterClient, OpenRouterEmbedder, db_recorder
 from niya.memory.engine import MemoryEngine, core_ids
 from niya.skills.store import SkillStore
-from niya.sleep.llm import ClaudeCodeCompleter, Completer, OpenRouterCompleter
+from niya.sleep.llm import ClaudeCodeCompleter, Completer, DeepSeekCompleter, OpenRouterCompleter
 from niya.tools.alarm_tool import alarm_tools
 from niya.tools.delegate import delegate_tools
 from niya.tools.egress import EgressDetector, EgressGate, Notifier
@@ -175,18 +175,19 @@ AnyAgent = Agent | ClaudeCodeAgent
 SHORT_QUERY = 12
 
 
+def recall_query(text: str, previous: str | None) -> str:
+    """"那個呢？" means nothing alone; lean on what the owner said just before."""
+    return f"{previous}\n{text}" if len(text) < SHORT_QUERY and previous else text
+
+
 def recall_hook(memory: MemoryEngine):
     async def recall(conv: Conversation, turn_id: str, items: list[InboundItem]) -> str | None:
         text = "\n".join(item.content for item in items if item.speaker != "system").strip()
         if not text:
             return None
-        if len(text) < SHORT_QUERY:
-            # "那個呢？" means nothing alone; lean on what the owner said just before.
-            earlier = conv.messages[: len(conv.messages) - len(items)]
-            previous = next((m.content for m in reversed(earlier) if m.role == "user" and m.speaker == "owner" and m.content), None)
-            if previous:
-                text = f"{previous}\n{text}"
-        result = await memory.recall(text, session_id=conv.session_id, turn_id=turn_id, exclude=core_ids(conv.system_prompt))
+        earlier = conv.messages[: len(conv.messages) - len(items)]
+        previous = next((m.content for m in reversed(earlier) if m.role == "user" and m.speaker == "owner" and m.content), None)
+        result = await memory.recall(recall_query(text, previous), session_id=conv.session_id, turn_id=turn_id, exclude=core_ids(conv.system_prompt))
         return result.block
 
     return recall
@@ -291,17 +292,33 @@ def needs_new_session(conversation: Conversation, choice: ModelChoice) -> bool:
     return conversation.engine is not None and conversation.engine != choice.provider and bool(conversation.messages)
 
 
-def sleep_completer(settings: Settings, db: Database, clock: Clock, tools: CoreTools) -> Callable[[], Completer]:
-    """Sleep uses [sleep] model if set, otherwise whatever niya is chatting with right now."""
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEEPSEEK_TIMEOUT = 900.0  # max-effort thinking over a long transcript can take several minutes
+
+
+def sleep_completer(settings: Settings, db: Database, clock: Clock, openrouter: OpenRouterClient | None, clients: list) -> Callable[[], Completer]:
+    """Sleep uses [sleep] model (and effort) if set, otherwise whatever niya is chatting with right now."""
+    deepseek: list[OpenRouterClient] = []
 
     def build() -> Completer:
-        choice = parse_choice(settings.sleep_model) if settings.sleep_model else current_choice(db, settings)[0]
+        choice = parse_choice(settings.sleep_model, SLEEP_PROVIDERS) if settings.sleep_model else current_choice(db, settings)[0]
+        effort = settings.sleep_effort or None
         if choice.provider == CLAUDE:
             return ClaudeCodeCompleter(
-                choice.model, config_dir=settings.claude_config_dir, cwd=settings.home, secrets=settings.secrets, recorder=db_recorder(db, clock)
+                choice.model, config_dir=settings.claude_config_dir, cwd=settings.home, secrets=settings.secrets,
+                effort=effort_for(CLAUDE, effort or ""), recorder=db_recorder(db, clock),
             )
-        if tools.openrouter is None:
+        if choice.provider == DEEPSEEK:
+            if not deepseek:
+                client = OpenRouterClient(
+                    settings.secrets.get("DEEPSEEK_API_KEY", ""), base_url=DEEPSEEK_BASE_URL, recorder=db_recorder(db, clock),
+                    timeout=DEEPSEEK_TIMEOUT, name="DeepSeek", key_name="DEEPSEEK_API_KEY",
+                )
+                deepseek.append(client)
+                clients.append(client)  # closed with the rest
+            return DeepSeekCompleter(deepseek[0], choice.model, effort)
+        if openrouter is None:
             raise ValueError("睡眠整理要用 OpenRouter，但沒有設定 OPENROUTER_API_KEY。")
-        return OpenRouterCompleter(tools.openrouter, choice.model)
+        return OpenRouterCompleter(openrouter, choice.model, effort)
 
     return build

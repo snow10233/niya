@@ -116,6 +116,28 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bodies[0]["reasoning"], {"effort": "high"})
         self.assertNotIn("reasoning", bodies[1])
 
+    async def test_deepseek_turns_thinking_on_with_its_own_effort_field(self):
+        from niya.sleep.llm import DeepSeekCompleter
+
+        bodies = []
+
+        def handle(request):
+            self.assertEqual(request.url.path, "/v1/chat/completions")
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json=chat_body(content='{"ok": true}'))
+
+        client = self.make(handle, base_url="https://api.deepseek.com/v1", name="DeepSeek")
+        self.assertEqual(await DeepSeekCompleter(client, "deepseek-flash", "xhigh").complete(system="s", prompt="p", task="nrem"), '{"ok": true}')
+        await DeepSeekCompleter(client, "deepseek-flash").complete(system="s", prompt="p", task="nrem")
+        self.assertEqual((bodies[0]["thinking"], bodies[0]["reasoning_effort"]), ({"type": "enabled"}, "max"))
+        self.assertNotIn("reasoning", bodies[0])
+        self.assertNotIn("reasoning_effort", bodies[1])
+
+    async def test_errors_name_the_service(self):
+        client = self.make(lambda request: httpx.Response(401, text="bad key"), name="DeepSeek")
+        with self.assertRaisesRegex(LLMError, "DeepSeek 回應 HTTP 401"):
+            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}])
+
     async def test_public_model_catalog(self):
         def handle(request):
             self.assertNotIn("Authorization", request.headers)

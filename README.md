@@ -117,6 +117,52 @@ uv run --env-file .env niya model        # 查看、切換模型
   - 所有工具一樣經過黑名單、外傳檢查和密鑰遮蔽。每則訊息也一樣存進 niya 的資料庫。
   - Claude Code 的自動壓縮已經關掉，context 滿了照計畫提早睡覺。
 - 記憶用的 embedding（M5）還是走 OpenRouter。
+- **睡眠用的模型**：`[sleep] model` 和 `[sleep] effort` 可以另外指定。
+  - 除了 claude、openrouter，也可以用 DeepSeek 官方 API：`model = "deepseek:deepseek-flash"`，金鑰放 `DEEPSEEK_API_KEY`。
+  - DeepSeek 只能用在睡眠整理，不能拿來對話。
+  - 它的思考強度只有 `low`、`high`、`max`：`medium` 算 `high`，`xhigh` 算 `max`。
+  - DeepSeek 不回報費用，所以 `budget_usd` 對它沒有作用。
+
+## 從 Hermes 搬家
+
+把 Hermes 用過的 agent 帶過來：對話照時間重新「活」一遍，整理成 niya 的記憶；筆記拆開來分層；人格從 SOUL.md 來。
+資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db` 和 `memories/`。niya 只讀，不會改它。
+
+```sh
+uv run --env-file .env niya hermes import ~/hermes-copy      # 1. 匯入對話（只寫原始紀錄）
+uv run --env-file .env niya hermes replay                    # 2. 回放：每回合自動回想，每天 03:00、13:00 睡覺整理
+uv run --env-file .env niya hermes notes ~/hermes-copy       # 3. 拆筆記，產生審核清單和人格草稿
+uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 4. 看過、改過清單之後匯入
+```
+
+- **匯入**：
+  - 每個 Hermes session 會在 03:00、13:00 切開。niya 在那兩個時間睡覺、清空 context，所以一次醒著就是一個 session。
+  - Hermes 自己塞進對話的東西會拿掉：gateway 標頭、時間戳前綴、compaction 摘要、心跳提示。
+  - 以 `[SILENT]` 結束的心跳整個不算。被主人撤回（rewind）的回合也不算。
+  - cron 和子 agent 的 session 不匯入，它們的結果本來就會回到主對話。
+  - 背景程序、委派完成這類通知只留前 300 字。
+  - 所有內容都先遮蔽密鑰再存。
+  - 可以重複匯入：同一份資料匯入第二次什麼都不會多；換成比較新的副本，只會補上新的回合。
+- **回放**：
+  - 用快轉的時鐘照時間走過整段歷史。每個 session 開頭先建記憶區塊，主人的每則訊息都跑一次自動回想，到了 03:00、13:00 就跑真正的睡眠整理。
+  - 遺忘曲線、時間標籤和日、週、月摘要，都會像 niya 當時就在場一樣。
+  - 同一次睡眠裡的片段預設同時整理 4 個（`--parallel`），重複的記憶在寫入時檢查，不會記兩次。
+  - 中斷了再跑一次，會從最後一次睡完的地方接著做。`--until 'YYYY-MM-DD HH:MM'` 可以只跑一段，先看看結果。
+  - 回放不會超過現在的時間。睡眠時段如果在未來，真的 niya 就會跳過那一晚。還沒睡到的片段，交給 niya 上線後的第一次睡眠整理。
+- **筆記**：
+  - USER.md、MEMORY.md 的每條筆記會拆成「一件事一條」，再分成四類：
+    - `[persona]`：寫進人格設定，永遠記得。
+    - `[owner]`：關於主人的記憶。
+    - `[self]`：niya 自己知道的事。
+    - `[drop]`：只對 Hermes 有用的，不帶過來。
+  - 審核清單可以直接改標籤、內容、重要度，或刪掉整行；⚠️ 是敏感內容。
+  - **apply**：
+    - 回放時已經記得的筆記，算「又遇到一次」，會變牢。
+    - 推翻舊記憶的筆記，會取代舊的那條。
+    - 其他的新增成記憶。因為 Hermes 每個 session 都會看到這些筆記，新增時的穩定度是一般新記憶的 3 倍。
+  - **人格**：
+    - 從 Hermes 最後一份 system prompt 取出 SOUL.md，拿掉「運行在 Hermes 上」的句子，存成 `persona.hermes.md`。
+    - apply 時把 `[persona]` 的筆記接在後面，寫到設定檔的 `persona` 路徑。
 
 ## 安全機制
 

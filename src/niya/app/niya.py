@@ -82,7 +82,7 @@ class Niya:
             clock=self.clock,
             tz=s.tz,
             engine=self.tools.memory,
-            completer=sleep_completer(s, self.db, self.clock, self.tools),
+            completer=sleep_completer(s, self.db, self.clock, self.tools.openrouter, self.tools.clients),
             brain=self.brain,
             current_session=lambda: self.control.agent.conversation.session_id,
             wake_up=self._wake_up,
