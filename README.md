@@ -81,7 +81,11 @@
 - **Discord**：
   - **收訊息**：`niya run` 以 Discord bot 常駐，只回應主人。私訊之外，也可以設定幾個頻道。其他帳號、bot 一律忽略。
   - **送訊息**：先遮蔽密鑰，再依 code block 切成 2000 字以內，超過 6000 字改傳 `.md` 附檔。niya 處理中會顯示「正在輸入」。
-  - **工具摘要**：niya 每呼叫一次工具，就多一行摘要，例如 `💻 terminal: systemctl status nginx`、`📖 read_file: /etc/hosts`。同一回合的摘要都在同一則訊息裡，有新的呼叫就編輯那則訊息；子 agent 的呼叫前面加 `↳`。不想看可以在 `niya.toml` 設 `[agent] tool_progress = false`。
+  - **工具摘要**：niya 每呼叫一次工具，就顯示一行「emoji 工具名稱」，下面用 code block 放指令、路徑或查詢，最多 40 字，規則照 Hermes。
+    - 連續呼叫同一個工具時共用一行標題；同樣的呼叫重複時記成 `(×2)`。
+    - 這些摘要都在同一則訊息裡，有新的呼叫就編輯它。超過長度就接著開新的一則；niya 說完話之後的呼叫，也會開新的一則，放在那句話下面。
+    - 子 agent 的呼叫，標題前面加 `↳`。
+    - 不想看可以在 `niya.toml` 設 `[agent] tool_progress = false`。
   - **睡覺中**：自動回「睡覺中」（30 分鐘最多一次），狀態顯示 💤。
   - **指令**：`/status`、`/wake`、`/stop`、`/sleep`、`/dream`、`/alarms`、`/egress`、`/model`、`/effort`、`/new`，只有主人能用；另外也可以打 `!wake`。
 

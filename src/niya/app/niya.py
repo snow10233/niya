@@ -31,7 +31,7 @@ from niya.core.inbox import Inbox
 from niya.core.redact import Redactor
 from niya.llm.choice import current_choice
 from niya.sleep.orchestrator import KIND_LABELS, SleepOrchestrator
-from niya.tools.preview import tool_line
+from niya.tools.preview import ToolView, tool_view
 
 Say = Callable[[str], Awaitable[None]]
 
@@ -43,7 +43,7 @@ class Interface:
     notice: Say  # system notices: paused uploads, waking up, errors
     confirm: Callable[[str], Awaitable[bool]]  # yes/no questions (e.g. switching provider)
     on_busy: Callable[[bool], Awaitable[None]] | None = None
-    progress: Callable[[str], None] | None = None  # one line per tool call, as it starts
+    progress: Callable[[ToolView], None] | None = None  # each tool call, as it starts
 
 
 class Niya:
@@ -114,8 +114,17 @@ class Niya:
 
     def _tool_started(self, name: str, args: dict[str, Any], sub: bool = False) -> None:
         assert self.ui.progress is not None
-        line = tool_line(name, args)
-        self.ui.progress(self.redact(f"↳ {line}" if sub else line))
+        # Redact before the preview cuts anything short: half a key no longer matches.
+        self.ui.progress(tool_view(name, self._redacted(args), sub=sub))
+
+    def _redacted(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, list):
+            return [self._redacted(item) for item in value]
+        if isinstance(value, dict):
+            return {key: self._redacted(item) for key, item in value.items()}
+        return value
 
     async def _context_full(self, used: int, progress: str) -> None:
         await self.ui.say(f"有點累了，先睡一下，整理完就醒。（context 用了 {used}%）")
