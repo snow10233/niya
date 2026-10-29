@@ -28,6 +28,7 @@ class Brain:
         reply: Say,
         report: Say,
         on_context_full: ContextFull | None = None,
+        on_busy: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self.inbox = inbox
         self.control = control
@@ -35,6 +36,9 @@ class Brain:
         self.reply = reply
         self.report = report
         self.on_context_full = on_context_full
+        self.on_busy = on_busy
+        self._current: asyncio.Task | None = None
+        self._stopping = False
         # System lines to put in front of the next turn (e.g. why the context was just cleared).
         self.carry: list[str] = []
         # Held for the whole turn; commands that swap the agent or the session take it too.
@@ -45,8 +49,31 @@ class Brain:
             await self.inbox.wait()
             async with self.lock:
                 items = self.inbox.take()
-                if items:
-                    await self.turn(items)
+                if not items:
+                    continue
+                if self.on_busy:
+                    await self.on_busy(True)
+                # Its own task, so /stop can cancel this turn without stopping the brain.
+                self._current = asyncio.create_task(self.turn(items))
+                try:
+                    await self._current
+                except asyncio.CancelledError:
+                    if not self._stopping:
+                        raise
+                    self._stopping = False
+                    await self.report("（已停下這一回合）")
+                finally:
+                    self._current = None
+                    if self.on_busy:
+                        await self.on_busy(False)
+
+    def stop(self) -> bool:
+        """Cancel the turn in progress (the inbox and everything else keep going)."""
+        if self._current is None or self._current.done():
+            return False
+        self._stopping = True
+        self._current.cancel()
+        return True
 
     async def turn(self, items: list[InboundItem]) -> None:
         agent = self.control.agent
