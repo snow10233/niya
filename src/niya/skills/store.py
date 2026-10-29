@@ -216,6 +216,25 @@ class SkillStore:
         self._event(name, "write_file", session_id, file_path)
         return f"已寫入技能「{name}」的 {file_path}。"
 
+    def import_file(self, name: str, file_path: str, data: bytes) -> None:
+        """A file of a skill brought over from elsewhere, kept where it was: its scripts may look for it there."""
+        self._require(name, ("active", "stale"))
+        relative = Path(file_path)
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts or relative == Path("SKILL.md"):
+            raise SkillError(f"{file_path} 不能當附檔的路徑。")
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        if text is not None and len(text) > MAX_CONTENT:
+            raise SkillError(f"附檔太長了（上限 {MAX_CONTENT:,} 字）。")
+        if text is not None and (threat := first_threat_message(text, "strict")):
+            raise SkillError(f"內容像是注入或危險指令，沒有寫入：{threat}")
+        target = self._dir(name, "active") / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        self._event(name, "import_file", None, file_path)
+
     def _move(self, name: str, from_status: str, to_status: str) -> None:
         source, target = self._dir(name, from_status), self._dir(name, to_status)
         if target.exists():

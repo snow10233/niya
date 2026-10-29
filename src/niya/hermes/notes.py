@@ -120,9 +120,13 @@ def render_review(notes: list[Note]) -> str:
             if (file, note.entry) not in shown and note.original:
                 lines += ["", f"> 原文 {note.entry}：{' '.join(note.original.split())}"]
                 shown.add((file, note.entry))
-            mark = f"{SENSITIVE} " if note.sensitive else ""
-            lines.append(f"- [{note.category}] ({note.kind}, {note.importance}) {mark}{note.content}")
+            lines.append(note_line(note))
     return "\n".join(lines) + "\n"
+
+
+def note_line(note: Note) -> str:
+    mark = f"{SENSITIVE} " if note.sensitive else ""
+    return f"- [{note.category}] ({note.kind}, {note.importance}) {mark}{note.content}"
 
 
 def parse_review(text: str) -> list[Note]:

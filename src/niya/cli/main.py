@@ -173,10 +173,15 @@ def main(argv: list[str] | None = None) -> int:
     hermes_notes = hermes_sub.add_parser("notes", help="把 USER.md／MEMORY.md 拆成單條並分類，產生審核清單和人格草稿")
     hermes_notes.add_argument("source", type=Path, help="Hermes 資料夾的副本（裡面有 memories/ 和 state.db）")
     hermes_notes.add_argument("--out", type=Path, help="審核清單的位置，預設 $NIYA_HOME/hermes-notes.md")
-    hermes_apply = hermes_sub.add_parser("apply", help="匯入審核過的筆記，並寫出人格設定")
+    hermes_skills = hermes_sub.add_parser("skills", help="讀 Hermes 的技能：事實接到筆記審核清單後面，技能列成搬家清單、先換成 niya 的工具")
+    hermes_skills.add_argument("source", type=Path, help="Hermes 資料夾的副本（裡面有 skills/）")
+    hermes_skills.add_argument("--notes", type=Path, help="筆記審核清單，預設 $NIYA_HOME/hermes-notes.md")
+    hermes_skills.add_argument("--parallel", type=int, default=8, help="同時讀幾個技能（預設 8）")
+    hermes_apply = hermes_sub.add_parser("apply", help="匯入審核過的筆記和技能，並寫出人格設定")
     hermes_apply.add_argument("review", type=Path, help="改好的審核清單")
     hermes_apply.add_argument("--persona-draft", type=Path, help="人格草稿，預設和審核清單同一個資料夾的 persona.hermes.md")
     hermes_apply.add_argument("--persona", type=Path, help="人格設定要寫到哪裡，預設設定檔的 persona 或 $NIYA_HOME/persona.md")
+    hermes_apply.add_argument("--skills", type=Path, help="技能搬家清單，預設和審核清單同一個資料夾的 hermes-skills.md（沒有就只匯入筆記）")
     args = parser.parse_args(argv)
 
     try:

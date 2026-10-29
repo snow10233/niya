@@ -99,7 +99,58 @@ async def _notes(settings: Settings, db: Database, source: Path, out: Path | Non
             await c.aclose()
 
 
-async def _apply(settings: Settings, db: Database, review: Path, persona_draft: Path | None, persona_out: Path | None) -> int:
+async def _skills(settings: Settings, db: Database, source: Path, notes_path: Path | None, parallel: int) -> int:
+    from niya.app.runtime import sleep_completer
+    from niya.hermes.skills import discover, render_checklist, review_all, stage, with_skill_notes
+
+    skills = discover(source / "skills")
+    if not skills:
+        print(f"{source / 'skills'} 裡沒有技能。", file=sys.stderr)
+        return 1
+    counts = {o: sum(s.origin == o for s in skills) for o in ("self", "changed", "bundled")}
+    print(f"找到 {len(skills)} 個技能：自己寫的 {counts['self']}、內建被改過的 {counts['changed']}、內建沒改過的 {counts['bundled']}（只列出來，不讀）。")
+    print(f"用 {_sleep_model(settings)} 讀 {counts['self'] + counts['changed']} 個技能，同時讀 {parallel} 個…", flush=True)
+    clock = RealClock()
+    clients: list = []
+    try:
+        before = db.one("SELECT COALESCE(MAX(id), 0) AS id FROM llm_calls")["id"]
+        results = await review_all(sleep_completer(settings, db, clock, None, clients)(), skills, parallel=parallel, report=lambda line: print(line, flush=True))
+    finally:
+        for c in clients:
+            await c.aclose()
+    checklist = settings.home / "hermes-skills.md"
+    staging = settings.home / "hermes-skills"
+    for result in results:
+        stage(result, staging)
+    checklist.write_text(render_checklist(results, staging), encoding="utf-8")
+    notes = notes_path or settings.home / "hermes-notes.md"
+    old = notes.read_text(encoding="utf-8") if notes.exists() else ""
+    if old:
+        notes.with_name(notes.name + ".bak").write_text(old, encoding="utf-8")
+    notes.write_text(with_skill_notes(old, results), encoding="utf-8")
+    moving = [r for r in results if r.verdict == "move"]
+    print(f"建議搬 {len(moving)} 個、不搬 {len(results) - len(moving)} 個；從技能抽出 {sum(len(r.notes) for r in results)} 條筆記。")
+    if failed := [r.skill.name for r in results if r.error]:
+        print(f"{len(failed)} 個技能模型沒有回應（{'、'.join(failed)}），清單上標了，請自己判斷。", file=sys.stderr)
+    print(f"搬家清單：{checklist}\n改好的技能：{staging}/\n筆記接在：{notes}" + ("（原本的備份在 .bak）" if old else ""))
+    print(f"模型用量：{_usage(db, before)}")
+    print("改好以後用 niya hermes apply 一起匯入。")
+    return 0
+
+
+def _apply_skills(settings: Settings, db: Database, checklist: Path) -> None:
+    from niya.hermes.skills import import_skills, parse_checklist
+    from niya.skills.store import SkillStore
+
+    chosen = [name for name, verdict in parse_checklist(checklist.read_text(encoding="utf-8")).items() if verdict == "move"]
+    store = SkillStore(settings.home / "skills", db, RealClock())
+    stats = import_skills(store, checklist.with_suffix(""), chosen)
+    print(f"技能：搬了 {len(stats.moved)} 個到 {store.root}" + (f"，{len(stats.existing)} 個已經有了沒動" if stats.existing else "") + "。")
+    for name, why in stats.refused:
+        print(f"  沒搬 {name}：{why}", file=sys.stderr)
+
+
+async def _apply(settings: Settings, db: Database, review: Path, persona_draft: Path | None, persona_out: Path | None, skills: Path | None) -> int:
     from niya.app.runtime import sleep_completer
     from niya.hermes.notes import apply, parse_review, persona_with_notes
 
@@ -118,6 +169,9 @@ async def _apply(settings: Settings, db: Database, review: Path, persona_draft: 
         target.write_text(persona_with_notes(draft.read_text(encoding="utf-8"), notes), encoding="utf-8")
         print(f"人格設定寫到 {target}（加了 {stats.persona} 條筆記）。")
     print(f"記憶：{stats.same} 條回放時已經記得（變牢）、{stats.replaced} 條取代舊的、{stats.created} 條新增；不帶 {stats.dropped} 條" + (f"，{stats.blocked} 條疑似注入被擋下" if stats.blocked else "") + "。")
+    checklist = skills or review.with_name("hermes-skills.md")
+    if checklist.exists():
+        _apply_skills(settings, db, checklist)
     return 0
 
 
@@ -130,6 +184,8 @@ async def run_hermes_command(settings: Settings, args) -> int:
             return await _replay(settings, db, args.until, args.parallel)
         if args.hermes_command == "notes":
             return await _notes(settings, db, args.source, args.out)
-        return await _apply(settings, db, args.review, args.persona_draft, args.persona)
+        if args.hermes_command == "skills":
+            return await _skills(settings, db, args.source, args.notes, args.parallel)
+        return await _apply(settings, db, args.review, args.persona_draft, args.persona, args.skills)
     finally:
         db.close()
