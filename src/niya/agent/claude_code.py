@@ -23,6 +23,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ClaudeSDKError,
+    ProcessError,
     RateLimitEvent,
     RateLimitInfo,
     ResultMessage,
@@ -52,6 +53,8 @@ ENGINE = "claude"
 SERVER = "niya"
 TOOL_PREFIX = f"mcp__{SERVER}__"
 CAP_TOOL_TEXT = "錯誤：這一回合的工具呼叫已達上限，這個呼叫沒有執行。請直接向主人總結目前的進度。"
+MISSING_SESSION = "No conversation found"
+LOST_CONTEXT_NOTE = "這個 session 先前的對話接續不上了（Claude Code 那邊找不到紀錄），之前的內容不在 context 裡；需要的話向主人確認。"
 LIMIT_LABELS = {
     "five_hour": "5 小時額度",
     "seven_day": "每週額度",
@@ -136,8 +139,8 @@ class ClaudeCodeAgent:
         self.tools = tools
         self.conversation = conversation
         self.clock = clock
-        self.config_dir = config_dir
-        self.cwd = cwd
+        self.config_dir = config_dir.resolve()
+        self.cwd = cwd.resolve()
         self.max_iterations = max_iterations
         self.effort = effort_for(ENGINE, effort or "")
         self.secrets = dict(secrets or {})
@@ -185,11 +188,11 @@ class ClaudeCodeAgent:
         conv.add_user_items(turn_id, items)
         if conv.engine is None:
             conv.bind_engine(self.engine)
-        prompt = render_history(conv.messages[start:], conv.tz, conv.recall_blocks)[0]["content"]
         turn = _Turn(turn_id, ToolContext(session_id=conv.session_id, turn_id=turn_id, now=self.clock.now))
         self._turn = turn
         try:
-            client = await self._ensure_client()
+            client = await self._ensure_client(turn)
+            prompt = render_history(conv.messages[start:], conv.tz, conv.recall_blocks)[0]["content"]
             await client.query(prompt)
             async for message in client.receive_response():
                 self._handle(turn, message)
@@ -230,15 +233,27 @@ class ClaudeCodeAgent:
     async def aclose(self) -> None:
         await self._disconnect()
 
-    async def _ensure_client(self) -> SDKClient:
+    async def _ensure_client(self, turn: _Turn) -> SDKClient:
         conv = self.conversation
         if self._client is not None and self._client_session == conv.session_id:
             return self._client
         await self._disconnect()
         resume = conv.engine_session_id if conv.engine == self.engine else None
+        try:
+            client = await self._connect(resume)
+        except ProcessError as exc:
+            if resume is None or MISSING_SESSION not in str(exc):
+                raise
+            # The transcript is gone (deleted, another machine, a changed config dir): go on in a fresh one.
+            log.warning("Claude Code session %s not found; starting a new one", resume)
+            conv.add_system_line(turn.turn_id, LOST_CONTEXT_NOTE, ts=self.clock.now())
+            client = await self._connect(None)
+        self._client, self._client_session = client, conv.session_id
+        return client
+
+    async def _connect(self, resume: str | None) -> SDKClient:
         client = self.client_factory(self.options(resume))
         await client.connect()
-        self._client, self._client_session = client, conv.session_id
         return client
 
     async def _disconnect(self) -> None:

@@ -38,7 +38,8 @@ def cli_version() -> str:
 
 def claude_env(config_dir: Path, secrets: Mapping[str, str]) -> dict[str, str]:
     env = {
-        "CLAUDE_CONFIG_DIR": str(config_dir),
+        # Claude Code runs in another cwd, so a relative path would point at an empty config without the login.
+        "CLAUDE_CONFIG_DIR": str(config_dir.resolve()),
         # niya never compresses its context; it goes to sleep when the context fills up instead.
         "DISABLE_AUTO_COMPACT": "1",
         "DISABLE_AUTOUPDATER": "1",
