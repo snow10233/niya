@@ -10,7 +10,7 @@ from niya.model_choice import current_choice
 from niya.runtime import AnyAgent, build_agent, build_core_tools, needs_new_session, open_conversation, restart_conversation, system_prompt_factory
 from niya.tools.processes import BackgroundProcess
 
-HELP = "指令：/new 開新 session、/model 查看或切換模型、/effort 調整思考強度、/egress list|allow <host>|remove <host>、/quit 離開"
+HELP = "指令：/new 開新 session、/model 查看或切換模型、/effort 調整思考強度、/egress list|allow <host>|remove <host>、/exit 離開"
 
 
 async def _notify(text: str) -> None:
@@ -61,7 +61,7 @@ async def run_repl(settings: Settings) -> int:
                 break
             if not line:
                 continue
-            if line == "/quit":
+            if line in ("/exit", "/quit"):
                 break
             command, _, arg = line.partition(" ")
             if command == "/model":
