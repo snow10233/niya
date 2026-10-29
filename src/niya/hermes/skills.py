@@ -13,7 +13,7 @@ import json
 import re
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from niya.hermes.notes import CATEGORIES, NOTE_KINDS, Note, note_line
@@ -24,6 +24,7 @@ from niya.tools.fuzzy_match import fuzzy_find_and_replace
 SKIP_DIRS = frozenset({".archive", ".curator_backups", ".hub"})
 JUNK = frozenset({"__pycache__", ".DS_Store"})
 PROMPT_CHARS = 250_000
+ATTEMPTS = 3  # a model thinking at max effort sometimes spends its whole output before writing the JSON
 ORIGINS = {"self": "Hermes 自己寫的", "changed": "Hermes 內建、被改過的", "bundled": "Hermes 內建、沒改過的"}
 VERDICTS = ("move", "drop")
 NOTES_HEADING = "# 從 Hermes 技能抽出的筆記"
@@ -34,11 +35,11 @@ Hermes 把很多學到的東西寫在技能（SKILL.md 加附檔）裡，你要�
 
 一、抽出技能裡記著的事實，放進 niya 的記憶。只抽事實：主人的偏好、習慣、狀況、決定，以及 niya 需要知道的環境資訊（機器、服務、路徑、帳號、專案現況）。
 操作步驟和指令留在技能裡，不要抽。每條用一句完整、自然的繁體中文寫，看單句就懂（主詞寫出來，例如「主人…」）。分類：
-- persona：niya 待人處事的準則、跟主人相處的方式、說話風格，以及主人幾乎不會變的基本資料。
+- persona：跟主人相處的方式、說話風格這類人格層級的準則，以及主人幾乎不會變的基本資料。這些會一直放在 niya 的人格設定裡，所以要少而精：做某件工作的規則和作法不算（那是 owner 或 self），最後附的人格設定裡已經有的也不要再列。
 - owner：主人的偏好、習慣、狀況、正在做的事。
 - self：niya 自己需要知道的環境資訊。
 - drop：只對 Hermes 有意義的（Hermes 的設定、gateway、curator、cron 機制、Hermes 專屬工具）。
-kind 用 fact / preference / intention / insight；importance 1–10。牽涉主人隱私或過去創傷的內容，sensitive 設成 true，原樣保留它附帶的處理原則。
+kind 用 fact / preference / intention / insight；importance 1–10。主人過去的創傷、健康、法律問題這類說出去會傷到主人的內容，sensitive 設成 true，原樣保留它附帶的處理原則；一般的成人話題、購物和收藏偏好不算。
 
 二、判斷技能要不要搬（verdict）：
 - drop：內容在講 Hermes 本身（設定、gateway、session、model routing、curator、cron 機制、怎麼改 MEMORY.md／USER.md／SOUL.md），或 niya 已經內建同樣的機制（睡覺整理記憶、做夢、鬧鐘），或已經過時。
@@ -53,7 +54,8 @@ reason 用一句話說明。
 - cronjob、cronjob_manage（Hermes 排程）→ alarm（purpose=task 加 repeat 的 cron 規則；時間到了是叫醒 niya 本人去做，不是另開 session 跑 prompt）。
 - memory（寫 MEMORY.md／USER.md）→ remember；session_search → deep_recall 或 recall_timeline。niya 沒有 MEMORY.md、USER.md，記憶會淡忘、睡覺時整理。
 - SOUL.md → niya 的人格設定（persona.md，主人管理，niya 不自己改）。
-- MCP 工具在 niya 叫 mcp__<server>__<tool>。
+- MCP 工具在 niya 叫 mcp__<server>__<tool>。MCP server 寫在 niya 設定檔的 [mcp.servers.<name>]（command、args、env，或 url），niya 啟動時連上就固定了：沒有逐一挑選工具的設定，也不能在執行中開關或重連，改設定要請主人重開 niya。
+- niya 本身是 systemd 的 niya.service。Hermes gateway 的 reload、restart 換到 niya 就沒有了；niya 也不能自己停掉或重開服務。
 - execute_code、clarify、todo、mixture_of_agents：niya 沒有。execute_code 改用 terminal 跑 python，clarify 改成直接問主人。
 - 技能自己資料夾的路徑已經換成 ${SKILL_DIR}，不用再改。~/.hermes 底下的其他檔案（scripts、.env、logs 等）在主機上還在，路徑照舊；但要靠 Hermes 在跑才有的東西（gateway、hermes 指令、Hermes 的 cron、dashboard）換到 niya 就沒了。
 edits 只改必要的地方，不要重寫整份、不要順便潤稿。old 從原文逐字複製，長到在那個檔案裡只出現一次；new 是改好的文字；file 是 ===== 標題上的檔案路徑。不用改就給空陣列。
@@ -197,16 +199,20 @@ def _parse(skill: HermesSkill, data: dict) -> SkillReview:
     return SkillReview(skill, verdict, " ".join(str(data.get("reason") or "").split()), notes, edits if verdict == "move" else [])
 
 
-async def review(completer: Completer, skill: HermesSkill) -> SkillReview:
+async def review(completer: Completer, skill: HermesSkill, persona: str = "") -> SkillReview:
     if skill.origin == "bundled":
         return SkillReview(skill, "drop", "Hermes 內建的技能，沒有被改過。")
-    try:
-        return _parse(skill, parse_json(await completer.complete(system=SKILL_SYSTEM, prompt=prompt_for(skill, staged_files(skill)), task="hermes_skill")))
-    except Exception as exc:  # one bad reply should not sink the other skills
-        return SkillReview(skill, "move" if skill.origin == "self" else "drop", "模型沒有回應，請自己判斷。", error=f"{type(exc).__name__}: {exc}")
+    system = SKILL_SYSTEM + (f"\n\nniya 現在的人格設定：\n{persona.strip()}" if persona.strip() else "")
+    prompt = prompt_for(skill, staged_files(skill))
+    for _ in range(ATTEMPTS):
+        try:
+            return _parse(skill, parse_json(await completer.complete(system=system, prompt=prompt, task="hermes_skill")))
+        except Exception as exc:  # one bad reply should not sink the other skills
+            error = f"{type(exc).__name__}: {exc}"
+    return SkillReview(skill, "move" if skill.origin == "self" else "drop", "模型沒有回應，請自己判斷。", error=error)
 
 
-async def review_all(completer: Completer, skills: list[HermesSkill], *, parallel: int = 8, report: Callable[[str], None] | None = None) -> list[SkillReview]:
+async def review_all(completer: Completer, skills: list[HermesSkill], *, persona: str = "", parallel: int = 8, report: Callable[[str], None] | None = None) -> list[SkillReview]:
     gate = asyncio.Semaphore(max(1, parallel))
     done = 0
     todo = sum(s.origin != "bundled" for s in skills)
@@ -214,15 +220,35 @@ async def review_all(completer: Completer, skills: list[HermesSkill], *, paralle
     async def one(skill: HermesSkill) -> SkillReview:
         nonlocal done
         if skill.origin == "bundled":
-            return await review(completer, skill)
+            return await review(completer, skill, persona)
         async with gate:
-            result = await review(completer, skill)
+            result = await review(completer, skill, persona)
         done += 1
         if report:
             report(f"[{done}/{todo}] {skill.name}：{result.verdict}，{len(result.notes)} 條筆記，{len(result.edits)} 處修改" + (f"（{result.error}）" if result.error else ""))
         return result
 
     return list(await asyncio.gather(*(one(s) for s in skills)))
+
+
+def save_reviews(results: list[SkillReview], path: Path) -> None:
+    """What the model said about each skill, so a few can be read again without redoing the rest."""
+    items = [
+        {"name": r.skill.name, "verdict": r.verdict, "reason": r.reason, "notes": [asdict(n) for n in r.notes], "edits": [asdict(e) for e in r.edits], "failed_edits": r.failed_edits, "error": r.error}
+        for r in results
+    ]
+    path.write_text(json.dumps(items, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+def load_reviews(path: Path, skills: list[HermesSkill]) -> dict[str, SkillReview]:
+    by_name = {s.name: s for s in skills}
+    out = {}
+    for item in json.loads(path.read_text(encoding="utf-8")) if path.exists() else []:
+        if skill := by_name.get(item["name"]):
+            notes = [Note(**n) for n in item["notes"]]
+            edits = [Edit(**e) for e in item["edits"]]
+            out[skill.name] = SkillReview(skill, item["verdict"], item["reason"], notes, edits, item["failed_edits"], item["error"])
+    return out
 
 
 def stage(result: SkillReview, staging: Path) -> None:
