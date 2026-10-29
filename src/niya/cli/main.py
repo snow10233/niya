@@ -146,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="niya", description="niya：會睡覺、會遺忘、有時間感的長期運行 agent")
     parser.add_argument("--config", type=Path, help="設定檔路徑，預設 $NIYA_CONFIG 或 /etc/niya/niya.toml")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("run", help="以 Discord bot 常駐執行（systemd 用這個）")
     repl = sub.add_parser("repl", help="在終端機跟 niya 對話（開發測試用）")
     repl.add_argument("--fake-clock", nargs="?", const="", metavar="'YYYY-MM-DD HH:MM'", help="用可以快轉的時鐘（/advance）測試睡眠和鬧鐘")
     sub.add_parser("doctor", help="檢查執行環境")
@@ -170,6 +171,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"設定錯誤：{exc}", file=sys.stderr)
         return 2
 
+    if args.command == "run":
+        from niya.discord_bot.bot import run_discord
+
+        return run_discord(settings)
     if args.command == "repl":
         from niya.cli.repl import run_repl
 

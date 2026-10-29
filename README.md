@@ -78,6 +78,11 @@
       - `env` 裡用 `${VAR}` 引用的環境變數，會和 niya 自己的密鑰一樣處理：讀完就從環境變數移除、在輸出中遮蔽，不會出現在 terminal 裡。
     - **連不上時**：某個 server 連不上，只會略過那一個，不影響啟動。
 - **terminal 的環境**：niya 的 terminal 不會帶到它自己的 virtualenv，所以 `python3`、`pip` 用的是系統的。
+- **Discord**：
+  - **收訊息**：`niya run` 以 Discord bot 常駐，只回應主人。私訊之外，也可以設定幾個頻道。其他帳號、bot 一律忽略。
+  - **送訊息**：先遮蔽密鑰，再依 code block 切成 2000 字以內，超過 6000 字改傳 `.md` 附檔。niya 處理中會顯示「正在輸入」。
+  - **睡覺中**：自動回「睡覺中」（30 分鐘最多一次），狀態顯示 💤。
+  - **指令**：`/status`、`/wake`、`/stop`、`/sleep`、`/dream`、`/alarms`、`/egress`、`/model`、`/effort`、`/new`，只有主人能用；另外也可以打 `!wake`。
 
 ## 模型與登入
 
@@ -132,6 +137,46 @@ uv run --env-file .env niya repl
 - 資料存在 `NIYA_HOME`（`.env.example` 預設是專案目錄下的 `.niya/`）的 `niya.db`。VPS 上預設是 `/var/lib/niya`。
 - 設定檔可以用 `--config` 或 `NIYA_CONFIG` 指定，格式見 `niya.example.toml`。人格設定見 `persona.example.md`。
 - 密鑰只從環境變數讀，讀完就從環境中移除，不要寫進設定檔或提交到 Git。
+
+## Discord 與部署到 VPS
+
+### 1. 建立 Discord bot
+
+1. 到 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Application，在 **Bot** 頁按 Reset Token 取得 token，並打開 **Message Content Intent**。
+2. 在 **OAuth2 → URL Generator** 勾 `bot` 和 `applications.commands`，權限勾 Send Messages、Read Message History、Attach Files，用產生的網址把 bot 邀進你的伺服器。bot 要和你在同一個伺服器裡才能私訊你。
+3. 在 Discord 打開開發者模式，對自己的頭像按右鍵，選「複製使用者 ID」。這就是 `owner_id`。
+
+### 2. 安裝（在 VPS 上以 root 執行）
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh          # 安裝 uv
+git clone <這個 repo> /opt/niya && cd /opt/niya
+uv sync --frozen
+mkdir -p /etc/niya && chmod 700 /etc/niya
+cp niya.example.toml /etc/niya/niya.toml                  # 填 [discord] owner_id、[paths] 等
+cp persona.example.md /etc/niya/persona.md                # 寫下你希望 niya 知道的關於你的事
+install -m 600 /dev/null /etc/niya/niya.env               # 寫入 DISCORD_TOKEN、OPENROUTER_API_KEY 等
+```
+
+`/etc/niya/niya.env` 的內容和 `.env.example` 一樣，只放密鑰。
+
+### 3. 登入 Claude、檢查、啟動
+
+```sh
+cd /opt/niya
+set -a; . /etc/niya/niya.env; set +a
+export NIYA_CONFIG=/etc/niya/niya.toml
+.venv/bin/niya login        # 會印出網址，在自己的電腦打開並登入，再把代碼貼回來
+.venv/bin/niya doctor
+cp deploy/niya.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now niya
+journalctl -u niya -f       # 看日誌
+```
+
+- 資料放在 `/var/lib/niya`：資料庫、技能、備份，以及 Claude Code 的登入資料。
+- niya 改到自己的程式時，用 `git -C /opt/niya status` 和 `git -C /opt/niya diff` 就看得出改了什麼。
+- systemd 設了 `TasksMax=512`、`MemoryMax=2G`，即使是 root 也跑不出 fork bomb，也不會把整台機器的記憶體吃光。
+- niya 用 `nohup` 或 `&` 啟動的程序，在 niya 重啟時會一起被關掉。所以長期執行的服務，niya 會做成 systemd unit。
 
 ## 送給模型的格式
 
