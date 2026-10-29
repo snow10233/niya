@@ -34,6 +34,13 @@ allow_private_urls = false   # 允許抓私有網段（雲端 metadata 位址永
 # 也可以自己指定指令，例如 "uvx browser-use"。
 # command = ""
 
+[image]
+# image_generate 用哪個服務畫圖。不設定就用 OpenRouter（有 OPENROUTER_API_KEY 時）。
+# provider = "codex" 走 ChatGPT 方案：透過官方 Codex CLI 的 $imagegen，VPS 上要先 codex login。
+# provider = "openrouter"
+# model = "openai/gpt-5.4-image-2"   # 只有 openrouter 用得到
+# codex_command = "codex"
+
 [egress]
 # 讀過外部內容後，把本機資料傳到「陌生主機」的指令會先暫停，等主人回「好」。
 # 這裡列的主機（含子網域）永遠算已知。
