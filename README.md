@@ -189,6 +189,7 @@ uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 5. 看�
     - 列出要改的地方，把 Hermes 的工具換成 niya 的（例如 `cronjob_manage` → `alarm`、`send_message` → `discord`、`vision_analyze` → `read_file` 看圖）。
   - 每個技能都會複製到 `$NIYA_HOME/hermes-skills/<名稱>/`，已經套用修改，技能自己資料夾的路徑換成 `${SKILL_DIR}`。檔案位置不動，附的腳本才找得到自己的檔案。
   - 搬家清單是 `hermes-skills.md`，改標籤決定搬不搬；要調整內容就直接改 `hermes-skills/` 裡的檔案。Hermes 內建、沒改過的技能只列出來，預設不搬。
+  - 模型回的不是 JSON 會再試兩次。結果存在 `hermes-skills.json`，`--only 名稱,名稱` 可以只重讀幾個，其他沿用上次的結果。
   - apply 時把 `[move]` 的技能搬進 `$NIYA_HOME/skills/`，每個檔案都用最嚴格的規則掃描過；niya 已經有的同名技能不動，所以可以重跑。
 
 ## 安全機制

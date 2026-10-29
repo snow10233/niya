@@ -99,29 +99,39 @@ async def _notes(settings: Settings, db: Database, source: Path, out: Path | Non
             await c.aclose()
 
 
-async def _skills(settings: Settings, db: Database, source: Path, notes_path: Path | None, parallel: int) -> int:
+async def _skills(settings: Settings, db: Database, source: Path, notes_path: Path | None, parallel: int, only: list[str]) -> int:
     from niya.app.runtime import sleep_completer
-    from niya.hermes.skills import discover, render_checklist, review_all, stage, with_skill_notes
+    from niya.hermes.skills import discover, load_reviews, render_checklist, review_all, save_reviews, stage, with_skill_notes
 
     skills = discover(source / "skills")
     if not skills:
         print(f"{source / 'skills'} 裡沒有技能。", file=sys.stderr)
         return 1
+    checklist = settings.home / "hermes-skills.md"
+    staging = settings.home / "hermes-skills"
+    cache = settings.home / "hermes-skills.json"
+    previous = load_reviews(cache, skills) if only else {}
+    if unknown := sorted(set(only) - {s.name for s in skills}):
+        print(f"沒有這些技能：{'、'.join(unknown)}", file=sys.stderr)
+        return 1
     counts = {o: sum(s.origin == o for s in skills) for o in ("self", "changed", "bundled")}
     print(f"找到 {len(skills)} 個技能：自己寫的 {counts['self']}、內建被改過的 {counts['changed']}、內建沒改過的 {counts['bundled']}（只列出來，不讀）。")
-    print(f"用 {_sleep_model(settings)} 讀 {counts['self'] + counts['changed']} 個技能，同時讀 {parallel} 個…", flush=True)
+    to_read = [s for s in skills if s.name in only or s.name not in previous]
+    print(f"用 {_sleep_model(settings)} 讀 {sum(s.origin != 'bundled' for s in to_read)} 個技能，同時讀 {parallel} 個…", flush=True)
     clock = RealClock()
     clients: list = []
     try:
         before = db.one("SELECT COALESCE(MAX(id), 0) AS id FROM llm_calls")["id"]
-        results = await review_all(sleep_completer(settings, db, clock, None, clients)(), skills, parallel=parallel, report=lambda line: print(line, flush=True))
+        draft = (notes_path or settings.home / "hermes-notes.md").with_name("persona.hermes.md")
+        persona = draft.read_text(encoding="utf-8") if draft.exists() else ""
+        fresh = await review_all(sleep_completer(settings, db, clock, None, clients)(), to_read, persona=persona, parallel=parallel, report=lambda line: print(line, flush=True))
     finally:
         for c in clients:
             await c.aclose()
-    checklist = settings.home / "hermes-skills.md"
-    staging = settings.home / "hermes-skills"
-    for result in results:
+    for result in fresh:  # the rest stay as they were staged, owner's edits included
         stage(result, staging)
+    results = [{r.skill.name: r for r in fresh}.get(s.name) or previous[s.name] for s in skills]
+    save_reviews(results, cache)
     checklist.write_text(render_checklist(results, staging), encoding="utf-8")
     notes = notes_path or settings.home / "hermes-notes.md"
     old = notes.read_text(encoding="utf-8") if notes.exists() else ""
@@ -185,7 +195,7 @@ async def run_hermes_command(settings: Settings, args) -> int:
         if args.hermes_command == "notes":
             return await _notes(settings, db, args.source, args.out)
         if args.hermes_command == "skills":
-            return await _skills(settings, db, args.source, args.notes, args.parallel)
+            return await _skills(settings, db, args.source, args.notes, args.parallel, [n for n in (args.only or "").split(",") if n])
         return await _apply(settings, db, args.review, args.persona_draft, args.persona, args.skills)
     finally:
         db.close()

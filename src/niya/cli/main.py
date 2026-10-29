@@ -177,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     hermes_skills.add_argument("source", type=Path, help="Hermes 資料夾的副本（裡面有 skills/）")
     hermes_skills.add_argument("--notes", type=Path, help="筆記審核清單，預設 $NIYA_HOME/hermes-notes.md")
     hermes_skills.add_argument("--parallel", type=int, default=8, help="同時讀幾個技能（預設 8）")
+    hermes_skills.add_argument("--only", metavar="NAME,NAME", help="只重讀這幾個技能，其他的沿用上次的結果（清單、筆記會重新產生）")
     hermes_apply = hermes_sub.add_parser("apply", help="匯入審核過的筆記和技能，並寫出人格設定")
     hermes_apply.add_argument("review", type=Path, help="改好的審核清單")
     hermes_apply.add_argument("--persona-draft", type=Path, help="人格草稿，預設和審核清單同一個資料夾的 persona.hermes.md")

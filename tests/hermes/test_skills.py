@@ -9,7 +9,7 @@ from helpers import ts
 from niya.core.clock import FakeClock
 from niya.core.db import Database
 from niya.hermes.notes import parse_review
-from niya.hermes.skills import NOTES_HEADING, _dir_hash, discover, import_skills, parse_checklist, prompt_for, render_checklist, review_all, stage, staged_files, with_skill_notes
+from niya.hermes.skills import NOTES_HEADING, _dir_hash, discover, import_skills, load_reviews, parse_checklist, prompt_for, render_checklist, review_all, save_reviews, stage, staged_files, with_skill_notes
 from niya.skills.store import SkillError, SkillStore
 
 SNOWCAST = """---
@@ -64,15 +64,19 @@ REPLIES = {
 
 
 class SkillCompleter:
-    def __init__(self, broken=()):
+    def __init__(self, broken=(), flaky=()):
         self.prompts = {}
+        self.calls = {}
         self.broken = set(broken)
+        self.flaky = set(flaky)
 
     async def complete(self, *, system, prompt, task):
         name = prompt.split("（", 1)[0].removeprefix("技能：")
         self.prompts[name] = prompt
-        if name in self.broken:
-            return "抱歉，我不知道"
+        self.system = system
+        self.calls[name] = self.calls.get(name, 0) + 1
+        if name in self.broken or (name in self.flaky and self.calls[name] == 1):
+            return "抱歉，我想太久了"
         return json.dumps(REPLIES.get(name, {"verdict": "move", "reason": "有用", "notes": [{"content": "主人的主日曆是 primary。", "category": "owner", "kind": "fact", "importance": 5}], "edits": []}))
 
 
@@ -105,9 +109,9 @@ class HermesSkillsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("用了 242 次，最後一次 2026-10-28", prompt)
         self.assertIn("===== specs/flow.md =====", prompt)
 
-    async def review(self, **kwargs):
+    async def review(self, persona="", **kwargs):
         completer = SkillCompleter(**kwargs)
-        results = await review_all(completer, list(self.skills.values()), parallel=2)
+        results = await review_all(completer, list(self.skills.values()), persona=persona, parallel=2)
         staging = self.dir / "home" / "hermes-skills"
         for result in results:
             stage(result, staging)
@@ -131,6 +135,16 @@ class HermesSkillsTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(checklist.index("## Hermes 自己寫的"), checklist.index("## Hermes 內建、被改過的"))
         self.assertEqual(parse_checklist(checklist.replace("[move] snowcast-lab", "[drop] snowcast-lab")), {"snowcast": "move", "snowcast-lab": "drop", "hermes-runtime": "drop", "google-workspace": "move", "github": "drop"})
 
+    async def test_the_model_sees_the_persona_so_it_does_not_repeat_it(self):
+        completer, _, _ = await self.review(persona="# 澪夏\n\n說話簡潔。\n")
+        self.assertTrue(completer.system.endswith("niya 現在的人格設定：\n# 澪夏\n\n說話簡潔。"))
+
+    async def test_reviews_are_kept_for_reading_a_few_again(self):
+        _, results, _ = await self.review()
+        save_reviews(list(results.values()), self.dir / "cache.json")
+        loaded = load_reviews(self.dir / "cache.json", list(self.skills.values()))
+        self.assertEqual(loaded, results)
+
     async def test_facts_join_the_notes_review_and_can_be_redone(self):
         _, results, _ = await self.review()
         review = "# Hermes 筆記審核\n\n## USER.md\n- [owner] (fact, 5) 主人住在基隆。\n"
@@ -143,8 +157,10 @@ class HermesSkillsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(with_skill_notes(first, list(results.values())), first)  # run again: the section is replaced, not doubled
         self.assertEqual(first.count(NOTES_HEADING), 1)
 
-    async def test_a_bad_reply_is_marked_for_the_owner(self):
-        _, results, _ = await self.review(broken={"snowcast-lab"})
+    async def test_a_bad_reply_is_tried_again_then_marked_for_the_owner(self):
+        completer, results, _ = await self.review(broken={"snowcast-lab"}, flaky={"snowcast"})
+        self.assertEqual((completer.calls["snowcast"], results["snowcast"].error), (2, ""))
+        self.assertEqual(completer.calls["snowcast-lab"], 3)
         lab = results["snowcast-lab"]
         self.assertEqual(lab.verdict, "move")
         self.assertIn("ValueError", lab.error)
