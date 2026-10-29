@@ -61,7 +61,7 @@ uv run --env-file .env niya doctor
 uv run --env-file .env niya repl
 ```
 
-- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/effort` 調整思考強度，`/quit` 離開。
+- REPL 裡輸入 `/new` 開新 session，`/model` 切換模型，`/effort` 調整思考強度，`/exit` 離開。
 - 資料存在 `NIYA_HOME`（`.env.example` 預設是專案目錄下的 `.niya/`）的 `niya.db`。VPS 上預設是 `/var/lib/niya`。
 - 設定檔可以用 `--config` 或 `NIYA_CONFIG` 指定，格式見 `niya.example.toml`。人格設定見 `persona.example.md`。
 - 密鑰只從環境變數讀，讀完就從環境中移除，不要寫進設定檔或提交到 Git。
