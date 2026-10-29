@@ -13,6 +13,7 @@ MANAGE_DESCRIPTION = (
     "action：create（content 是完整的 SKILL.md）、patch（old_string → new_string，小改用這個）、edit（整份重寫）、"
     "write_file（附檔）、archive（不再需要；不會真的刪掉）、restore（從封存拿回來）、accept（收下睡覺時整理出的草稿）。"
     "SKILL.md 格式：開頭是 ---\\nname: 技能名稱\\ndescription: 什麼時候用、做什麼\\n---，接著是 markdown 本文。"
+    "要跑技能附的腳本，路徑寫成 ${SKILL_DIR}/scripts/…，讀出來時會換成技能資料夾。"
 )
 LIST_PARAMETERS: dict[str, Any] = {"type": "object", "properties": {}}
 VIEW_PARAMETERS = {

@@ -54,7 +54,7 @@
     - 想法只是 niya 自己的推測，初始 S 只有一半，要之後真的用上才會留下來。
   - **預算**：每次睡眠花在摘要和 REM 的上限是 `[sleep] budget_usd`（預設 1 美元）。對話整理（NREM）一定會做完，不受這個限制。
 - **M7 Skills（程序性記憶）**：
-  - **存放**：技能是 `$NIYA_HOME/skills/<name>/SKILL.md`（YAML frontmatter 加上 markdown 步驟，格式和 Hermes／agentskills.io 相同），可以附 `references/`、`templates/`、`scripts/`、`assets/`。
+  - **存放**：技能是 `$NIYA_HOME/skills/<name>/SKILL.md`（YAML frontmatter 加上 markdown 步驟，格式和 Hermes／agentskills.io 相同），可以附 `references/`、`templates/`、`scripts/`、`assets/`；SKILL.md 裡的 `${SKILL_DIR}` 讀出來時會換成技能資料夾，附的腳本可以寫成 `${SKILL_DIR}/scripts/x.py`。
   - **工具**：`skills_list`、`skill_view`、`skill_manage`（create、patch、edit、write_file、archive、restore、accept）。刪除一律改成封存，不會真的刪掉。
   - **何時寫、何時用**：做完複雜、會再遇到的工作，niya 會自己寫成技能；之後遇到同樣的事，先讀技能再照著做。每次開新 session，system prompt 會列出可用的技能。
   - **安全**：

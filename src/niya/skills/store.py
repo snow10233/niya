@@ -29,6 +29,7 @@ STALE_DAYS = 30
 ARCHIVE_DAYS = 90
 INDEX_DESCRIPTION = 80
 DAY = 86400.0
+SKILL_DIR = "${SKILL_DIR}"  # a skill's own folder, filled in when it is read (scripts/ can be run from there)
 
 
 class SkillError(ValueError):
@@ -129,6 +130,7 @@ class SkillStore:
         if scan_for_threats(text, "context"):
             self._event(name, "blocked", session_id)
             return f"[BLOCKED] 技能「{name}」的 {target.name} 含有可疑內容，沒有載入；請告訴主人。"
+        text = text.replace(SKILL_DIR, str(folder))
         if skill.status in ("active", "stale") and not file_path:
             # Loading a skill means niya is about to follow it: that is what keeps a skill alive.
             self.db.execute("UPDATE skills SET last_used_at = ?, use_count = use_count + 1, status = 'active' WHERE name = ?", (self.clock.now(), name))
@@ -137,7 +139,7 @@ class SkillStore:
             return text
         files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file() and p.name != "SKILL.md")
         note = {"proposed": "（這是睡覺時整理出的草稿，還沒收下）\n", "archived": "（這個技能已經封存）\n"}.get(skill.status, "")
-        return note + text + (f"\n\n附檔：{', '.join(files)}（用 file_path 讀）" if files else "")
+        return note + text + (f"\n\n附檔：{', '.join(files)}（用 file_path 讀；都在 {folder} 底下）" if files else "")
 
     def index(self) -> str:
         """The skills section of the system prompt: active skills only, one line each."""
