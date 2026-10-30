@@ -62,6 +62,14 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sleeps, [])
         self.assertFalse(self.records[-1].ok)
 
+    async def test_null_body_is_retried(self):
+        responses = [httpx.Response(200, json=None), httpx.Response(200, json=chat_body())]
+
+        client = self.make(lambda request: responses.pop(0))
+        result = await client.chat(model="test/model", messages=[])
+        self.assertEqual(result.content, "嗨")
+        self.assertEqual(len(self.sleeps), 1)
+
     async def test_gives_up_after_max_retries(self):
         client = self.make(lambda request: httpx.Response(502), max_retries=2)
         with self.assertRaises(LLMError):

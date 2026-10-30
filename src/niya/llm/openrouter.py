@@ -237,7 +237,9 @@ class OpenRouterClient:
             data = response.json()
         except ValueError:
             return LLMError(f"{self.name} 回傳的不是 JSON。", retryable=True)
-        error = data.get("error") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return LLMError(f"{self.name} 回傳的 JSON 不是物件。", retryable=True)
+        error = data.get("error")
         if error is None:
             choices = data.get("choices") or []
             error = choices[0].get("error") if choices and isinstance(choices[0], dict) else None
