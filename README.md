@@ -280,6 +280,19 @@ systemctl restart niya
 - 新程式要重啟才會生效。重啟前 niya 如果正在睡覺整理，下次醒著閒下來時會續睡，已整理完的片段不會重做。
 - service 檔用複製的，不用 `systemctl link` 連到 repo：niya 能改 `/opt/niya`，用複製的話，repo 裡的 service 檔被改動，也不會在你不知情時改掉 systemd 的設定（例如記憶體上限）。
 
+### 5. 定時跑的腳本
+
+不需要 niya 判斷、只要定時跑的腳本（監控、資料更新、產線），放在 systemd timer 裡用 `niya run-job` 跑：
+
+```sh
+niya run-job --name "snowbox 健康監控" --deliver discord:<頻道 ID> -- /usr/bin/python3 /opt/watch/check.py
+```
+
+- 腳本有輸出，才原樣發到 `--deliver` 的頻道；沒有輸出，或最後一行是 `{"wakeAgent": false}`，就什麼都不發。發出去之前會先遮蔽密鑰。
+- 腳本失敗（exit 不是 0）或超過 `--timeout` 秒（預設 3600），會把 exit code 和最後的 stderr、stdout 發到 `--on-failure`（預設跟 `--deliver` 同一個頻道）。
+- 腳本拿到的是 timer 的環境變數，但不包含 niya 的密鑰；預設在腳本所在的資料夾執行，可以用 `--cwd` 改。
+- 這和 Hermes 的 no_agent 排程是同一套規則，所以從 Hermes 搬來的腳本不用改。要 niya 判斷或回報的事，用鬧鐘（`alarm` 工具）。
+
 ## 送給模型的格式
 
 ```
