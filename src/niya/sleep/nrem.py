@@ -1,9 +1,10 @@
 """NREM: turn each closed segment of the raw record into events and long-term memories.
 
 One LLM call per segment (no tools, JSON out) cuts it into events, extracts facts, preferences and plans,
-and says which surfaced memories were really used. Code validates the cut (falling back to one event per
-segment), deduplicates against existing memories, and writes everything for a segment in one
-transaction, so a crash or an interrupted sleep never leaves half a segment behind.
+and says which surfaced memories were really used and which known ones the owner brought up again (archived
+ones included: meeting them again brings them back). Code validates the cut (falling back to one event per
+segment), deduplicates against existing memories, archived ones too, and writes everything for a segment in
+one transaction, so a crash or an interrupted sleep never leaves half a segment behind.
 """
 
 import json
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 DUPLICATE_COS = 0.92
 SIMILAR_COS = 0.75
+ARCHIVED_RELATED_COS = 0.45  # stricter than for live memories: these are only offered to be met again
 LINE_CHARS = 800
 SHORT_LINE_CHARS = 300
 CHUNK_CHARS = 30_000
@@ -41,6 +43,8 @@ class SegmentResult:
     memories: int = 0
     reencounters: int = 0
     used: int = 0
+    mentioned: int = 0
+    revived: int = 0
     labile: int = 0
     fallback: bool = False
     titles: list[str] = field(default_factory=list)
@@ -144,7 +148,7 @@ class Nrem:
             chunks.append(current)
         return chunks
 
-    async def _references(self, segment: Any, turns: list[_Turn]) -> tuple[str, dict[int, Memory], dict[int, Memory], list[Memory], list[Any]]:
+    async def _references(self, segment: Any, turns: list[_Turn]) -> tuple[str, dict[int, Memory], dict[int, Memory], dict[int, Memory], list[Memory], list[Any]]:
         now = self.engine.clock.now()
         recent = self.db.query(
             "SELECT * FROM memories WHERE kind = 'event' AND origin = 'nrem' AND state = 'active' AND occurred_start >= ? ORDER BY occurred_start DESC LIMIT 15",
@@ -153,10 +157,12 @@ class Nrem:
         recent_events = {r["id"]: self.engine.get(r["id"]) for r in recent}
         owner_text = "\n".join(row["content"] for t in turns for row in t.rows if row["role"] == "user" and row["speaker"] == "owner" and row["content"])[:2000]
         related: dict[int, Memory] = {}
+        archived: dict[int, Memory] = {}
         if owner_text:
             vectors = await self.engine.embed([owner_text])
             if vectors is not None:
                 related = {m.id: m for m, score in self.engine.nearest(vectors[0], 12) if m.kind in KINDS and score >= 0.3}
+                archived = {m.id: m for m, score in self.engine.nearest_archived(vectors[0], 5) if m.kind != "summary" and score >= ARCHIVED_RELATED_COS}
         turn_ids = [t.id for t in turns]
         marks = ",".join("?" * len(turn_ids))
         retrievals = self.db.query(f"SELECT * FROM retrieval_events WHERE turn_id IN ({marks}) AND verdict IS NULL", turn_ids) if turn_ids else []
@@ -175,14 +181,17 @@ class Nrem:
         if recent_events:
             lines += ["## 最近的事件（接續的話用 continues 填編號）"] + [f"- {i} [{format_ts(m.occurred_start, self.tz)}] {_clip(m.content, 80)}" for i, m in recent_events.items() if m]
         if related:
-            lines += ["## 可能相關的既有記憶（新資訊推翻舊的時，用 replaces 填編號）"] + [f"- {i} {m.content}" for i, m in related.items()]
+            lines += ["## 可能相關的既有記憶（新資訊推翻舊的時，用 replaces 填編號；主人又講到的放進 mentioned_memories）"] + [f"- {i} {m.content}" for i, m in related.items()]
         if surfaced:
             lines += ["## 這段對話中浮現過的記憶（真的用上的編號放進 used_memories）"] + [f"- {i} {m.content}" for i, m in surfaced.items()]
+        if archived:
+            lines += ["## 很久沒想起、已經淡忘的舊記憶（主人又講到的放進 mentioned_memories）"] + [f"- {i} {m.content}" for i, m in archived.items()]
         if labile:
             lines += ["## 白天刻意記住的（已經記下，不要重複萃取）"] + [f"- {m.content}" for m in labile]
         # Either list may hold the fact that new information overturns.
         replaceable = {**related, **{i: m for i, m in surfaced.items() if m.kind in KINDS}}
-        return "\n".join(lines), recent_events, replaceable, labile, retrievals
+        mentionable = {**related, **surfaced, **archived}
+        return "\n".join(lines), recent_events, replaceable, mentionable, labile, retrievals
 
     # --- one segment -------------------------------------------------------------------------------
 
@@ -215,9 +224,10 @@ class Nrem:
         if not turns:
             self.db.execute("UPDATE segments SET status = 'consolidated', consolidated_at = ?, sleep_run_id = ? WHERE id = ?", (self.engine.clock.now(), run_id, segment["id"]))
             return result
-        references, recent_events, related, labile, retrievals = await self._references(segment, turns)
+        references, recent_events, related, mentionable, labile, retrievals = await self._references(segment, turns)
         plans = []
         used: set[int] = set()
+        mentioned: set[int] = set()
         chunks = self._chunks(turns)
         limit = LINE_CHARS if len(chunks) == 1 else SHORT_LINE_CHARS
         for chunk in chunks:
@@ -226,6 +236,7 @@ class Nrem:
             events, fallback = self._validate(data, chunk)
             result.fallback |= fallback
             used |= {int(i) for i in (data or {}).get("used_memories") or [] if str(i).isdigit()}
+            mentioned |= {int(i) for i in (data or {}).get("mentioned_memories") or [] if str(i).isdigit()}
             plans.append((chunk, events))
 
         texts: list[str] = []
@@ -255,8 +266,20 @@ class Nrem:
                     verdict = "used" if event["memory_id"] in used else "unused"
                     self.db.execute("UPDATE retrieval_events SET verdict = ?, judged_at = ? WHERE id = ?", (verdict, now, event["id"]))
                     memory = self.engine.get(event["memory_id"])
-                    if verdict == "used" and memory is not None and self.engine.review(memory, kind="use", ref_id=event["turn_id"] or str(event["id"]), at=event["ts"], r=event["r_at"]):
+                    ref = event["turn_id"] or str(event["id"])
+                    if verdict == "used" and memory is not None and self.engine.review(memory, kind="use", ref_id=ref, at=event["ts"], r=event["r_at"]):
                         result.used += 1
+                    elif verdict == "unused" and memory is not None and memory.state in LIVE:
+                        self.engine.review(memory, kind="exposure", ref_id=ref, at=event["ts"], r=event["r_at"])
+                end = segment["ended_at"] or now
+                for memory_id in sorted(mentioned - used):
+                    memory = self.engine.get(memory_id) if memory_id in mentionable else None
+                    if memory is None or memory.state not in (*LIVE, "archived"):
+                        continue
+                    was_archived = memory.state == "archived"
+                    if self.engine.review(memory, kind="reencounter", ref_id=f"segment-{segment['id']}", at=end):
+                        result.mentioned += 1
+                        result.revived += was_archived
                 self.db.execute("UPDATE segments SET status = 'consolidated', consolidated_at = ?, sleep_run_id = ? WHERE id = ?", (now, run_id, segment["id"]))
         except BaseException:
             self.engine.reload_index()
@@ -309,11 +332,14 @@ class Nrem:
     def _write_candidate(self, segment, candidate, content, vector, start, end, event_memory, related, result: SegmentResult) -> None:
         kind = candidate.get("kind") if candidate.get("kind") in KINDS else "fact"
         if vector is not None:
-            nearest = self.engine.nearest(vector, 1)
-            if nearest and nearest[0][1] >= DUPLICATE_COS and nearest[0][0].state in LIVE:
+            nearest = [(m, s) for m, s in self.engine.nearest(vector, 1) if m.state in LIVE]
+            # Something forgotten and met again comes back instead of being learned from scratch.
+            nearest = nearest if nearest and nearest[0][1] >= DUPLICATE_COS else self.engine.nearest_archived(vector, 1)
+            if nearest and nearest[0][1] >= DUPLICATE_COS:
                 existing = nearest[0][0]
                 # Meeting something again in real life strengthens it; it is not a new memory.
-                self.engine.review(existing, kind="reencounter", ref_id=f"segment-{segment['id']}", at=end)
+                if self.engine.review(existing, kind="reencounter", ref_id=f"segment-{segment['id']}", at=end):
+                    result.revived += existing.state == "archived"
                 if event_memory:
                     self.engine.add_link(existing.id, event_memory.id, "derived_from")
                 result.reencounters += 1
