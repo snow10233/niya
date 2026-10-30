@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 
@@ -86,6 +87,19 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json=chat_body())
 
         result = await self.make(handle).chat(model="test/model", messages=[])
+        self.assertEqual(result.content, "嗨")
+        self.assertEqual(len(attempts), 2)
+
+    async def test_an_attempt_that_never_finishes_is_retried(self):
+        attempts = []
+
+        async def handle(request):
+            attempts.append(1)
+            if len(attempts) == 1:
+                await asyncio.sleep(5)
+            return httpx.Response(200, json=chat_body())
+
+        result = await self.make(handle, timeout=0.05).chat(model="test/model", messages=[])
         self.assertEqual(result.content, "嗨")
         self.assertEqual(len(attempts), 2)
 
