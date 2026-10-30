@@ -1,8 +1,8 @@
 """The memory engine: encoding, automatic recall each turn, deliberate recall, and the core block.
 
 Retrieval is done by code (embeddings, full-text search, time cues and the forgetting curve), never by
-letting the model read every memory. Surfacing a memory only counts as exposure; sleep later decides
-which surfaced memories were really used and strengthens those.
+letting the model read every memory. Surfacing a memory counts only as exposure, a small nudge; sleep
+later decides which memories were really used, or brought up again by the owner, and strengthens those.
 """
 
 import json
@@ -251,10 +251,22 @@ class MemoryEngine:
         found = self.load(i for i, _ in hits)
         return [(found[i], score) for i, score in hits if i in found]
 
+    def nearest_archived(self, vector: np.ndarray, k: int = 5) -> list[tuple[Memory, float]]:
+        """Archived memories are out of the hot index; sleep still checks them before writing something anew."""
+        if self.embedder is None:
+            return []
+        hits = search_archived(self.db, self.embedder.model, vector, k)
+        found = self.load(i for i, _ in hits)
+        return [(found[i], score) for i, score in hits if i in found and found[i].state == "archived"]
+
     def review(self, memory: Memory, *, kind: str, ref_id: str, at: float, r: float | None = None) -> bool:
-        """Strengthen a memory that was really used (or met again) at `at`. Idempotent per (memory, kind, ref)."""
+        """Strengthen a memory that was really used (or met again) at `at`. Idempotent per (memory, kind, ref).
+
+        Using an archived memory, or the owner bringing it up again, is relearning: it comes back, and since it
+        had all but faded the gain is large (relearning is quicker than learning anew)."""
         r = self.r(memory, at) if r is None else r
-        weight_kind = "relearn" if memory.state == "archived" and kind == "use" else kind
+        revived = memory.state == "archived" and kind in ("use", "reencounter")
+        weight_kind = "relearn" if revived else kind
         new_s = reinforce(memory.stability, r, weight_kind, self.params)
         inserted = self.db.execute(
             "INSERT OR IGNORE INTO memory_reviews(memory_id, kind, ref_id, ts, r_before, s_before, s_after) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -262,8 +274,6 @@ class MemoryEngine:
         ).rowcount
         if not inserted:
             return False
-        # Only really using an archived memory brings it back; a nudge from below does not.
-        revived = memory.state == "archived" and kind == "use"
         self.db.execute(
             "UPDATE memories SET stability = ?, last_review_at = MAX(last_review_at, ?), review_count = review_count + 1, state = ? WHERE id = ?",
             (new_s, at, "active" if revived else memory.state, memory.id),
