@@ -75,7 +75,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.clock.advance(DAY)
         result = await self.engine.recall("京都旅行住在鴨川旁邊的細節", session_id="now", turn_id="t1")
         self.assertEqual((len(result.ids), result.held), (6, 3))
-        self.assertIn("還有 3 條也相關、但排在後面的記憶沒有列出，需要時用 recall_more", result.block)
+        self.assertIn("還有 3 條也相關、但排在後面的記憶沒有列出；要的不在上面，先用 recall_more", result.block)
         self.assertTrue(self.engine.recall_more(session_id="now", turn_id="t2").startswith("這一回合沒有"))  # only this turn's
         more = self.engine.recall_more(session_id="now", turn_id="t1")
         self.assertEqual(more.count("京都旅行的第"), 3)

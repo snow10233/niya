@@ -43,9 +43,10 @@ def build_system_prompt(
     if "memory" in features:
         rules.append(
             "- 記憶：<recalled_memories> 是自動浮現的記憶，可能已經過時；時間標籤越模糊，代表越久沒想起。"
-            "主人提到「上次」「之前」「你記得嗎」，或你覺得應該知道卻想不起來時，先用工具去想，不要猜："
-            "<recalled_memories> 最後寫了還有幾條沒列出的，先用 recall_more 看；"
-            "依內容找用 deep_recall，依時間找用 recall_timeline，要從某條記憶往下挖就用 recall_related(ref)。"
+            "主人提到「上次」「之前」「你記得嗎」，或你覺得應該知道卻想不起來時，先用工具去想，不要猜。"
+            "要的記憶不在 <recalled_memories> 裡，或想確認有沒有更新、更多細節時，照順序找："
+            "<recalled_memories> 最後寫了還有幾條沒列出的，一定先用 recall_more 看；那裡也沒有，才用 deep_recall 以關鍵字找。"
+            "依時間找用 recall_timeline，要從某條記憶往下挖就用 recall_related(ref)。"
             "ref（例如 m123）只給你自己查詢用，不要在回覆裡提到。想刻意記住的事，用 remember。"
         )
     if "recall" in features and "memory" not in features:
