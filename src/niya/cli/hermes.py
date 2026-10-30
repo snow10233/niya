@@ -148,6 +148,49 @@ async def _skills(settings: Settings, db: Database, source: Path, notes_path: Pa
     return 0
 
 
+def _cron_plans(settings: Settings, jobs_path: Path):
+    import json
+
+    from niya.hermes.cron import plan, read_jobs
+    from niya.hermes.skills import parse_checklist as parse_skills
+
+    skills = settings.home / "hermes-skills.md"
+    dropped = frozenset(n for n, v in parse_skills(skills.read_text(encoding="utf-8")).items() if v == "drop") if skills.exists() else frozenset()
+    return [plan(job, settings.tz, dropped_skills=dropped) for job in read_jobs(json.loads(jobs_path.read_text(encoding="utf-8")))]
+
+
+def _cron(settings: Settings, jobs_path: Path) -> int:
+    import shutil
+
+    from niya.hermes.cron import parse_checklist, render_checklist
+
+    plans = _cron_plans(settings, jobs_path)
+    checklist = settings.home / "hermes-cron.md"
+    previous = parse_checklist(checklist.read_text(encoding="utf-8")) if checklist.exists() else {}
+    for p in plans:  # a fresher jobs.json keeps what the owner already ticked
+        p.choice = previous.get(p.job.id, p.choice)
+    shutil.copyfile(jobs_path, checklist.with_suffix(".json"))
+    checklist.write_text(render_checklist(plans, checklist.with_suffix(""), settings.tz), encoding="utf-8")
+    counts = {c: sum(p.choice == c for p in plans) for c in ("timer", "alarm", "drop")}
+    print(f"{len(plans)} 個排程：timer {counts['timer']}、鬧鐘 {counts['alarm']}、不搬 {counts['drop']}" + (f"（{sum(p.job.id in previous for p in plans)} 個沿用上次勾的）" if previous else "") + "。")
+    print(f"搬家清單：{checklist}\n改好以後用 niya hermes apply 一起匯入。")
+    return 0
+
+
+def _apply_cron(settings: Settings, db: Database, checklist: Path) -> None:
+    from niya.app.alarms import Alarms
+    from niya.hermes.cron import apply_plans, parse_checklist
+
+    plans = _cron_plans(settings, checklist.with_suffix(".json"))
+    units = checklist.with_suffix("")
+    stats = apply_plans(plans, parse_checklist(checklist.read_text(encoding="utf-8")), Alarms(db, RealClock(), settings.tz), units)
+    print(f"排程：{len(stats.alarms)} 個鬧鐘寫進 niya.db" + (f"（{len(stats.existing)} 個已經有了沒動）" if stats.existing else "") + f"，{len(stats.timers)} 個 systemd timer 寫到 {units}/。")
+    if stats.timers:
+        print(f"  切換那天在 VPS 上先停掉 Hermes，再把 {units.name}/ 複製過去執行 install.sh。")
+    for name, why in stats.refused:
+        print(f"  沒搬 {name}：{why}", file=sys.stderr)
+
+
 def _apply_skills(settings: Settings, db: Database, checklist: Path) -> None:
     from niya.hermes.skills import import_skills, parse_checklist
     from niya.skills.store import SkillStore
@@ -182,6 +225,8 @@ async def _apply(settings: Settings, db: Database, review: Path, persona_draft: 
     checklist = skills or review.with_name("hermes-skills.md")
     if checklist.exists():
         _apply_skills(settings, db, checklist)
+    if (cron := review.with_name("hermes-cron.md")).exists():
+        _apply_cron(settings, db, cron)
     return 0
 
 
@@ -194,6 +239,8 @@ async def run_hermes_command(settings: Settings, args) -> int:
             return await _replay(settings, db, args.until, args.parallel)
         if args.hermes_command == "notes":
             return await _notes(settings, db, args.source, args.out)
+        if args.hermes_command == "cron":
+            return _cron(settings, args.jobs)
         if args.hermes_command == "skills":
             return await _skills(settings, db, args.source, args.notes, args.parallel, [n for n in (args.only or "").split(",") if n])
         return await _apply(settings, db, args.review, args.persona_draft, args.persona, args.skills)
