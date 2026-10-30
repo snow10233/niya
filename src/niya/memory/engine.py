@@ -33,6 +33,7 @@ MAX_CONTENT = 600
 DUPLICATE_COS = 0.95
 AUTO_MAX_ITEMS = 6
 AUTO_MAX_CHARS = 900  # about 600 tokens of Chinese
+HELD_MAX_ITEMS = 20  # came to mind but did not make the top: kept aside for recall_more
 DEEP_MEMORIES = 8
 DEEP_MESSAGES = 6
 CORE_MAX_CHARS = 1800  # about 1.2k tokens
@@ -77,6 +78,7 @@ class RecallResult:
     block: str | None
     ids: list[int]
     tip: int
+    held: int = 0
 
 
 def _memory(row) -> Memory:
@@ -97,6 +99,7 @@ class MemoryEngine:
         self.params = params
         self.index = VectorIndex.load(db, embedder.model) if embedder else VectorIndex()
         self._last_query: dict[str, np.ndarray] = {}
+        self._held: dict[str, tuple[str, list[Candidate]]] = {}  # session -> (turn, what did not fit)
 
     # --- storage -----------------------------------------------------------------------------------
 
@@ -395,13 +398,29 @@ class MemoryEngine:
             chosen.append(candidate)
             size += len(line)
         self.log_retrievals(((c.memory, c.r) for c in chosen), channel="auto", session_id=session_id, turn_id=turn_id)
+        shown = {c.memory.id for c in chosen}
+        held = [c for c in sorted(picked, key=lambda c: -c.score) if c.memory.id not in shown][:HELD_MAX_ITEMS]
+        self._held[session_id] = (turn_id, held)
         if not chosen and not tip:
             return RecallResult(None, [], 0)
         lines = ["<recalled_memories>", *(self._auto_line(c, now) for c in chosen)]
+        if held:
+            lines.append(f"（還有 {len(held)} 條也相關、但排在後面的記憶沒有列出，需要時用 recall_more）")
         if tip:
             lines.append(f"（還有 {tip} 條可能相關、但想不太起來的記憶，需要時用 deep_recall）")
         lines.append("</recalled_memories>")
-        return RecallResult("\n".join(lines), [c.memory.id for c in chosen], tip)
+        return RecallResult("\n".join(lines), [c.memory.id for c in chosen], tip, len(held))
+
+    def recall_more(self, *, session_id: str, turn_id: str) -> str:
+        """The rest of what came to mind this turn: the memory's waiting room, no new search needed."""
+        held_turn, held = self._held.get(session_id, ("", []))
+        if held_turn != turn_id or not held:
+            return "這一回合沒有其他浮現的記憶了。要找別的，用 deep_recall 以關鍵字搜尋。"
+        del self._held[session_id]
+        now = self.clock.now()
+        self.log_retrievals(((c.memory, c.r) for c in held), channel="held", session_id=session_id, turn_id=turn_id)
+        lines = ["這一回合也浮現了、但排在後面的記憶（依相關程度排序）：", *(self._exact_line(c.memory, now) for c in held)]
+        return "\n".join(lines) + "\n（這裡沒有要找的，再用 deep_recall 以關鍵字搜尋。）"
 
     def _auto_line(self, candidate: Candidate, now: float) -> str:
         m = candidate.memory
