@@ -405,7 +405,7 @@ class MemoryEngine:
             return RecallResult(None, [], 0)
         lines = ["<recalled_memories>", *(self._auto_line(c, now) for c in chosen)]
         if held:
-            lines.append(f"（還有 {len(held)} 條也相關、但排在後面的記憶沒有列出，需要時用 recall_more）")
+            lines.append(f"（還有 {len(held)} 條也相關、但排在後面的記憶沒有列出；要的不在上面，先用 recall_more）")
         if tip:
             lines.append(f"（還有 {tip} 條可能相關、但想不太起來的記憶，需要時用 deep_recall）")
         lines.append("</recalled_memories>")

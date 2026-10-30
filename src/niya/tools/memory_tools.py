@@ -30,6 +30,7 @@ REMEMBER_PARAMETERS = {
 }
 DEEP_RECALL_DESCRIPTION = (
     "用力回想：搜尋所有記憶（包括已經很淡、要很用力才想得起來的）和以前的對話，結果附精確時間。"
+    "<recalled_memories> 最後寫了還有幾條沒列出時，先用 recall_more 看，那裡沒有再用這個。"
     "用關鍵字查效果最好，例如「咖啡」「nginx 502」，不要整句話。since / until 可限定時間（YYYY-MM-DD 或 YYYY-MM-DD HH:MM）。"
     "結果的 ref（m12 是記憶、msg#123 是原始訊息）可以交給 recall_related 往下挖。"
 )
