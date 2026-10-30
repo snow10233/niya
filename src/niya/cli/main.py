@@ -142,6 +142,40 @@ def run_memory_command(settings, args) -> int:
         db.close()
 
 
+def run_job_command(settings, args) -> int:
+    import os
+    import time
+
+    from niya.app.jobs import child_env, default_cwd, parse_target, run_job
+    from niya.core.redact import Redactor
+
+    command = args.job_command[1:] if args.job_command[:1] == ["--"] else args.job_command
+    if not command:
+        print("要跑的指令放在 -- 後面，例如：niya run-job --name 檢查 -- /usr/bin/python3 check.py", file=sys.stderr)
+        return 2
+    try:
+        deliver = parse_target(args.deliver)
+        on_failure = parse_target(args.on_failure) if args.on_failure is not None else deliver
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    return asyncio.run(
+        run_job(
+            name=args.name,
+            command=command,
+            deliver=deliver,
+            on_failure=on_failure,
+            cwd=args.cwd or default_cwd(command),
+            env=child_env(os.environ, list(settings.secrets)),
+            timeout_s=args.timeout,
+            token=settings.secrets.get("DISCORD_TOKEN", ""),
+            redact=Redactor(settings.secrets.values()),
+            tz=settings.tz,
+            now=time.time,
+        )
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="niya", description="niya：會睡覺、會遺忘、有時間感的長期運行 agent")
     parser.add_argument("--config", type=Path, help="設定檔路徑，預設 $NIYA_CONFIG 或 /etc/niya/niya.toml")
@@ -163,6 +197,13 @@ def main(argv: list[str] | None = None) -> int:
     listing.add_argument("--all", action="store_true", help="連封存和被取代的也列出")
     show = memory_sub.add_parser("show", help="看一條記憶的細節")
     show.add_argument("id", type=int)
+    run_job = sub.add_parser("run-job", help="跑一個排程腳本：有輸出才發到 Discord，失敗也會通報（給 systemd timer 用）")
+    run_job.add_argument("--name", required=True, help="排程名稱，失敗通報裡會用到")
+    run_job.add_argument("--deliver", default="none", metavar="discord:<頻道 ID>|none", help="有輸出時發到哪裡（預設 none：只留在 journal）")
+    run_job.add_argument("--on-failure", metavar="discord:<頻道 ID>|none", help="失敗時發到哪裡，預設和 --deliver 一樣")
+    run_job.add_argument("--cwd", type=Path, help="在哪個資料夾跑，預設是腳本所在的資料夾")
+    run_job.add_argument("--timeout", type=float, default=3600, help="最多跑幾秒（預設 3600）")
+    run_job.add_argument("job_command", nargs=argparse.REMAINDER, metavar="-- 指令", help="要跑的指令，放在 -- 後面")
     hermes = sub.add_parser("hermes", help="從 Hermes 搬過來：對話、筆記、人格")
     hermes_sub = hermes.add_subparsers(dest="hermes_command", required=True)
     hermes_import = hermes_sub.add_parser("import", help="匯入 Hermes 的對話（只寫原始紀錄；可以重複匯入較新的副本）")
@@ -215,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_effort_command(settings, args.level)
     if args.command == "memory":
         return run_memory_command(settings, args)
+    if args.command == "run-job":
+        return run_job_command(settings, args)
     if args.command == "hermes":
         from niya.cli.hermes import run_hermes_command
 
