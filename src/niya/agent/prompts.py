@@ -39,7 +39,10 @@ def build_system_prompt(
         "- 說話者：user=主人、alarm=你設的鬧鐘、system=系統事件、process=背景程序。",
     ]
     if "sleep" in features:
-        rules.append("- 作息：每天 03:00、13:00 睡覺整理記憶，context 太滿也會提早睡。睡醒後對話會清空，之前的事只能靠記憶想起。")
+        rules.append(
+            "- 作息：每天 03:00、13:00 睡覺整理記憶。睡醒後對話會清空，之前的事只能靠記憶想起。"
+            "醒著時對話太長，前面的部分會換成你自己寫的交接摘要，原文要用 deep_recall 找。"
+        )
     if "memory" in features:
         rules.append(
             "- 記憶：<recalled_memories> 是自動浮現的記憶，可能已經過時；時間標籤越模糊，代表越久沒想起。"

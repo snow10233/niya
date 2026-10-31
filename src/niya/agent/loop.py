@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, estimate_all, over
+from niya.agent.compact import HANDOFF_REQUEST, compact_conversation
 from niya.agent.context import Conversation
-from niya.agent.render import images_of
+from niya.agent.render import images_of, strip_echoed_prefix
 from niya.core.clock import Clock
 from niya.core.inbox import InboundItem, turn_source
 from niya.core.media import IMAGE_TOKENS
@@ -151,6 +152,24 @@ class Agent:
         added = self.conversation.messages[self._counted :]
         pictures = sum(len(images_of(m)) for m in added)
         return self.last_prompt_tokens + estimate_all(m.api_content if m.api_content is not None else m.content for m in added) + pictures * IMAGE_TOKENS
+
+    async def compact(self) -> None:
+        """The model writes its own handoff from the full context, and the session goes on from that."""
+        conv = self.conversation
+        schemas = self.tools.schemas() or None
+        result = await self.llm.chat(
+            model=self.model,
+            messages=[*conv.api_messages(), {"role": "user", "content": HANDOFF_REQUEST}],
+            # Tools stay declared so the cached prefix still matches; none may be called.
+            tools=schemas,
+            tool_choice="none" if schemas else None,
+            task="compact",
+            reasoning={"effort": self.effort} if self.effort else None,
+        )
+        summary = strip_echoed_prefix(result.content or "")
+        compact_conversation(conv, summary, now=self.clock.now(), context_limit=self.context_limit, prompt_tokens=result.usage.prompt_tokens)
+        self.last_prompt_tokens = estimate_all([conv.system_prompt, conv.handoff])
+        self._counted = len(conv.messages)
 
     async def set_model(self, model: str) -> None:
         self.model = model

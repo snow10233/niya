@@ -5,6 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from niya.agent.budget import SOFT, over, percent
+from niya.agent.compact import CONTINUE_NOTE, MAX_CONTINUATIONS, STOPPED_NOTE
 from niya.agent.loop import TurnResult
 from niya.app.control import ModelControl
 from niya.core.inbox import InboundItem, Inbox
@@ -14,7 +15,7 @@ from niya.tools.egress import EgressGate
 log = logging.getLogger(__name__)
 
 Say = Callable[[str], Awaitable[None]]
-# (percent used, progress report if the turn was cut short) -> optionally a line to carry into the next turn.
+# When compaction fails: (percent used, progress report if the turn was cut short) -> optionally a line to carry into the next turn.
 ContextFull = Callable[[int, str], Awaitable[str | None]]
 
 
@@ -27,7 +28,7 @@ class Brain:
         egress: EgressGate,
         reply: Say,
         report: Say,
-        on_context_full: ContextFull | None = None,
+        on_compact_failed: ContextFull | None = None,
         on_busy: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self.inbox = inbox
@@ -35,12 +36,14 @@ class Brain:
         self.egress = egress
         self.reply = reply
         self.report = report
-        self.on_context_full = on_context_full
+        self.on_compact_failed = on_compact_failed
         self.on_busy = on_busy
         self._current: asyncio.Task | None = None
         self._stopping = False
         # System lines to put in front of the next turn (e.g. why the context was just cleared).
         self.carry: list[str] = []
+        # Turns a compaction started since the owner last spoke; capped so a task that keeps filling the context stops.
+        self.continued = 0
         # Held for the whole turn; commands that swap the agent or the session take it too.
         self.lock = asyncio.Lock()
 
@@ -77,6 +80,8 @@ class Brain:
 
     async def turn(self, items: list[InboundItem]) -> None:
         agent = self.control.agent
+        if any(item.speaker == "owner" for item in items):
+            self.continued = 0
         try:
             result = await agent.run_turn(self.prepare(agent.conversation.session_id, items))
         except LLMError as exc:
@@ -91,11 +96,26 @@ class Brain:
         await self.check_context(agent, result)
 
     async def check_context(self, agent, result: TurnResult) -> None:
-        if self.on_context_full is None or not (result.context_full or over(result.prompt_tokens, agent.context_limit, SOFT)):
+        """A full context is compacted and, if the turn was cut short, the work carries on by itself."""
+        if not (result.context_full or over(result.prompt_tokens, agent.context_limit, SOFT)):
             return
-        note = await self.on_context_full(percent(result.prompt_tokens, agent.context_limit), result.text if result.context_full else "")
-        if note:
-            self.carry.append(note)
+        used = percent(result.prompt_tokens, agent.context_limit)
+        progress = result.text if result.context_full else ""
+        try:
+            await agent.compact()
+        except Exception:
+            log.exception("compaction failed")
+            if self.on_compact_failed is not None and (note := await self.on_compact_failed(used, progress)):
+                self.carry.append(note)
+            return
+        await self.report(f"（context 用了 {used}%，前面的對話換成交接摘要了）")
+        if not result.context_full:
+            return
+        if self.continued < MAX_CONTINUATIONS:
+            self.continued += 1
+            self.inbox.put("system", CONTINUE_NOTE)
+        else:
+            await self.report(STOPPED_NOTE)
 
     def prepare(self, session_id: str, items: list[InboundItem]) -> list[InboundItem]:
         """Owner messages may answer a paused upload and mention hosts; the gate sees them before the model does."""

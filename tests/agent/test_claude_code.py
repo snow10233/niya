@@ -20,6 +20,7 @@ from helpers import TZ, ts
 
 from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT
 from niya.agent.claude_code import CAP_TOOL_TEXT, ClaudeCodeAgent
+from niya.agent.compact import HANDOFF_REQUEST, CompactionError
 from niya.agent.context import Conversation
 from niya.app.runtime import build_core_tools
 from niya.core.clock import FakeClock
@@ -284,6 +285,43 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.conv.messages[2].content, CONTEXT_FULL_TOOL_TEXT)
         agent.conversation = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
         self.assertEqual(agent.last_prompt_tokens, 0)
+
+    async def test_compaction_asks_the_live_session_then_starts_a_new_one_from_the_handoff(self):
+        agent = self.agent(
+            [SystemMessage("init", {"session_id": SID}), say("早安"), done()],
+            [say("交接：主人說了早安", "m-h"), done()],
+            [say("在喔", "m-3"), done()],
+        )
+        await agent.run_turn(self.owner("早"))
+        await agent.compact()
+        first = self.harness.clients[0]
+        self.assertEqual(first.queries[-1], HANDOFF_REQUEST)
+        self.assertTrue(first.disconnected)
+        self.assertIsNone(self.conv.engine_session_id)
+        self.assertEqual(self.db.one("SELECT task FROM llm_calls ORDER BY id DESC")["task"], "compact")
+        result = await agent.run_turn(self.owner("在嗎"))
+        self.assertEqual(result.text, "在喔")
+        second = self.harness.clients[1]
+        self.assertIsNone(second.options.resume)
+        prompt = second.queries[0]
+        self.assertTrue(prompt.startswith("<context_handoff>"))
+        self.assertIn("# 交接摘要\n交接：主人說了早安", prompt)
+        self.assertTrue(prompt.endswith("</context_handoff>\n\n[2026-10-29 (四) 10:00] user: 在嗎"))
+        # Only the conversation itself is mirrored; the handoff exchange is not.
+        self.assertEqual([r[0] for r in self.rows()], ["user", "assistant", "user", "assistant"])
+
+    async def test_failed_handoff_leaves_the_session_as_it_was(self):
+        info = RateLimitInfo(status="rejected", resets_at=int(ts("2026-10-29 15:00")), rate_limit_type="five_hour")
+        agent = self.agent(
+            [SystemMessage("init", {"session_id": SID}), say("早安"), done()],
+            [RateLimitEvent(rate_limit_info=info, uuid="u", session_id=SID), done(is_error=True, api_error_status=429)],
+        )
+        await agent.run_turn(self.owner("早"))
+        with self.assertRaises(CompactionError) as caught:
+            await agent.compact()
+        self.assertIn("5 小時額度", str(caught.exception))
+        self.assertEqual(self.conv.engine_session_id, SID)
+        self.assertIsNone(self.db.one("SELECT id FROM compactions"))
 
     async def test_rate_limit_becomes_readable_error(self):
         info = RateLimitInfo(status="rejected", resets_at=int(ts("2026-10-29 15:00")), rate_limit_type="five_hour")
