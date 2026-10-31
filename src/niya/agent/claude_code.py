@@ -38,9 +38,10 @@ from claude_agent_sdk import (
 )
 
 from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT, HARD, over
+from niya.agent.compact import HANDOFF_REQUEST, CompactionError, compact_conversation
 from niya.agent.context import Conversation
 from niya.agent.loop import RecallHook, TurnResult, new_turn_id, recall_into
-from niya.agent.render import render_history
+from niya.agent.render import render_history, strip_echoed_prefix
 from niya.core.clock import Clock
 from niya.core.inbox import InboundItem, turn_source
 from niya.core.media import encoded
@@ -212,8 +213,10 @@ class ClaudeCodeAgent:
         turn = _Turn(turn_id, ToolContext(*(self.tool_scope or (conv.session_id, turn_id)), now=self.clock.now))
         self._turn = turn
         try:
-            client = await self._ensure_client(turn)
+            client, fresh = await self._ensure_client(turn)
             prompt = render_history(conv.messages[start:], conv.tz, conv.recall_blocks)[0]["content"]
+            if fresh:
+                prompt = conv.with_handoff(prompt)
             await client.query(prompt if isinstance(prompt, str) else _user_message(prompt))
             async for message in client.receive_response():
                 self._handle(turn, message)
@@ -239,6 +242,36 @@ class ClaudeCodeAgent:
             if self.on_turn_end:
                 self.on_turn_end(conv.session_id)
 
+    async def compact(self) -> None:
+        """Ask for the handoff inside the live Claude Code session, then the next turn starts a new one from it."""
+        conv = self.conversation
+        try:
+            client, fresh = await self._ensure_client(None)
+            if fresh:
+                raise CompactionError("Claude Code 那邊沒有這個 session 的紀錄，沒辦法寫交接")
+            texts: list[str] = []
+            error: str | None = None
+            await client.query(HANDOFF_REQUEST)
+            async for message in client.receive_response():
+                if isinstance(message, AssistantMessage) and not message.parent_tool_use_id:
+                    if message.error:
+                        error = error or ERROR_TEXT.get(message.error) or message.error
+                    else:
+                        texts += [block.text for block in message.content if isinstance(block, TextBlock)]
+                elif isinstance(message, RateLimitEvent) and message.rate_limit_info.status == "rejected":
+                    error = describe_rate_limit(message.rate_limit_info, conv.tz)
+                elif isinstance(message, ResultMessage):
+                    self._record_call(message, task="compact")
+                    if message.is_error:
+                        error = error or message.result or message.subtype
+        finally:
+            await self._disconnect()
+        if error:
+            raise CompactionError(error)
+        summary = strip_echoed_prefix("\n\n".join(t for t in texts if t.strip()))
+        compact_conversation(conv, summary, now=self.clock.now(), context_limit=self.context_limit, prompt_tokens=self.last_prompt_tokens)
+        self.last_prompt_tokens = 0
+
     async def set_model(self, model: str) -> None:
         self.model = model
         if self._client is not None:
@@ -254,23 +287,24 @@ class ClaudeCodeAgent:
     async def aclose(self) -> None:
         await self._disconnect()
 
-    async def _ensure_client(self, turn: _Turn) -> SDKClient:
+    async def _ensure_client(self, turn: _Turn | None) -> tuple[SDKClient, bool]:
+        """The client for this session, and whether it starts a Claude Code session with no history yet."""
         conv = self.conversation
         if self._client is not None and self._client_session == conv.session_id:
-            return self._client
+            return self._client, False
         await self._disconnect()
         resume = conv.engine_session_id if conv.engine == self.engine else None
         try:
             client = await self._connect(resume)
         except ProcessError as exc:
-            if resume is None or MISSING_SESSION not in str(exc):
+            if resume is None or MISSING_SESSION not in str(exc) or turn is None:
                 raise
             # The transcript is gone (deleted, another machine, a changed config dir): go on in a fresh one.
             log.warning("Claude Code session %s not found; starting a new one", resume)
             conv.add_system_line(turn.turn_id, LOST_CONTEXT_NOTE, ts=self.clock.now())
-            client = await self._connect(None)
+            client, resume = await self._connect(None), None
         self._client, self._client_session = client, conv.session_id
-        return client
+        return client, resume is None
 
     async def _connect(self, resume: str | None) -> SDKClient:
         client = self.client_factory(self.options(resume))
@@ -370,13 +404,13 @@ class ClaudeCodeAgent:
         result = ToolOutcome(call=call, content=text, full_content=full, is_error=bool(block.is_error), images=images)
         self.conversation.add_tool_result(turn.turn_id, result, ts=self.clock.now())
 
-    def _record_call(self, message: ResultMessage) -> None:
+    def _record_call(self, message: ResultMessage, task: str = "chat") -> None:
         if self.recorder is None:
             return
         usage = message.usage or {}
         self.recorder(
             CallRecord(
-                task="chat",
+                task=task,
                 model=f"{ENGINE}:{self.model}",
                 usage=Usage(
                     prompt_tokens=_prompt_tokens(usage),

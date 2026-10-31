@@ -10,7 +10,7 @@ from niya.agent.render import render_history, strip_echoed_prefix
 from niya.core.db import Database
 from niya.core.inbox import InboundItem
 from niya.llm.openrouter import ChatResult, ToolCall
-from niya.memory.episodic import assign_segment, close_session_segments, finish_segment_turn
+from niya.memory.episodic import assign_segment, close_session_segments, finish_segment_turn, latest_compaction
 from niya.tools.registry import ToolOutcome
 
 
@@ -73,6 +73,10 @@ class Conversation:
             r["id"]: r["recall_block"]
             for r in db.query("SELECT id, recall_block FROM turns WHERE session_id = ? AND recall_block IS NOT NULL", (session_id,))
         }
+        compaction = latest_compaction(db, session_id)
+        # Messages up to context_start are out of the context; the handoff stands in for them.
+        self.context_start: int = compaction["upto_message_id"] if compaction else 0
+        self.handoff: str | None = compaction["handoff"] if compaction else None
 
     @classmethod
     def open_current(cls, db: Database, *, now: float, tz: ZoneInfo, system_prompt: Callable[[], str], kind: str = "main") -> "Conversation":
@@ -102,6 +106,28 @@ class Conversation:
             "UPDATE sessions SET engine = ?, engine_session_id = ? WHERE id = ?",
             (self.engine, self.engine_session_id, self.session_id),
         )
+
+    def compact(self, handoff: str, *, ts: float, prompt_tokens: int | None = None) -> None:
+        """From now on the model sees the handoff instead of everything so far; a Claude Code session starts afresh."""
+        upto = self.messages[-1].id if self.messages else 0
+        self.db.execute(
+            "INSERT INTO compactions(session_id, ts, upto_message_id, handoff, prompt_tokens) VALUES (?, ?, ?, ?, ?)",
+            (self.session_id, ts, upto, handoff, prompt_tokens),
+        )
+        self.db.execute("UPDATE sessions SET engine_session_id = NULL WHERE id = ?", (self.session_id,))
+        self.context_start, self.handoff, self.engine_session_id = upto, handoff, None
+
+    @property
+    def context_messages(self) -> list[StoredMessage]:
+        return [m for m in self.messages if m.id > self.context_start]
+
+    def with_handoff(self, content: str | list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+        """The first user message after a compaction carries the handoff in front of it."""
+        if not self.handoff:
+            return content
+        if isinstance(content, str):
+            return f"{self.handoff}\n\n{content}"
+        return [{"type": "text", "text": self.handoff}, *content]
 
     def start_turn(self, turn_id: str, *, source: str, ts: float, recall_block: str | None = None) -> None:
         last = self.db.one("SELECT MAX(ended_at) AS ended FROM turns WHERE session_id = ?", (self.session_id,))
@@ -172,7 +198,10 @@ class Conversation:
             self.add_tool_result(turn_id, ToolOutcome(call=call, content=text, full_content=text, is_error=True), ts=ts)
 
     def api_messages(self) -> list[dict[str, Any]]:
-        return [{"role": "system", "content": self.system_prompt}, *render_history(self.messages, self.tz, self.recall_blocks)]
+        history = render_history(self.context_messages, self.tz, self.recall_blocks)
+        if history and history[0]["role"] == "user":
+            history[0] = {**history[0], "content": self.with_handoff(history[0]["content"])}
+        return [{"role": "system", "content": self.system_prompt}, *history]
 
     def _insert(
         self,
