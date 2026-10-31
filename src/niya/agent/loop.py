@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, estimate_all, over
+from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, context_limit, estimate_all, over
 from niya.agent.compact import HANDOFF_REQUEST, compact_conversation
 from niya.agent.context import Conversation
 from niya.agent.render import images_of, strip_echoed_prefix
@@ -80,7 +80,7 @@ class Agent:
         conversation: Conversation,
         clock: Clock,
         max_iterations: int = 40,
-        max_context_tokens: int = 200_000,
+        max_context_tokens: int = 0,
         effort: str | None = None,
         on_turn_end: Callable[[str], None] | None = None,
         recall: RecallHook | None = None,
@@ -99,7 +99,7 @@ class Agent:
         # (session, turn) the tools act under. Subagents use the parent's: shared taint, and paused uploads the owner can approve.
         self.tool_scope = tool_scope
         self.max_context_tokens = max_context_tokens
-        self.context_limit = max_context_tokens
+        self.context_limit = context_limit(None, max_context_tokens)
         self._limit_for: str | None = None
         self.conversation = conversation
 
@@ -203,9 +203,9 @@ class Agent:
         if lookup is not None:
             try:
                 window = await lookup(self.model)
-            except Exception:  # an unknown window just means the configured cap applies
+            except Exception:  # an unknown window just means the configured cap (or the fallback) applies
                 window = None
-        self.context_limit = min(window or self.max_context_tokens, self.max_context_tokens)
+        self.context_limit = context_limit(window, self.max_context_tokens)
         self._limit_for = self.model
 
     async def _wrap_up(self, turn_id: str, schemas: list[dict[str, Any]] | None, note: str, iterations: int, *, context_full: bool = False) -> TurnResult:

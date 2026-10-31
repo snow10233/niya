@@ -115,7 +115,7 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.conv = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
         self.harness = Harness()
 
-    def agent(self, *turns, conversation=None, max_iterations=40, max_context_tokens=200_000):
+    def agent(self, *turns, conversation=None, max_iterations=40, max_context_tokens=0):
         self.harness.script.extend(list(t) for t in turns)
         agent = ClaudeCodeAgent(
             model="opus",
@@ -322,6 +322,16 @@ class ClaudeCodeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("5 小時額度", str(caught.exception))
         self.assertEqual(self.conv.engine_session_id, SID)
         self.assertIsNone(self.db.one("SELECT id FROM compactions"))
+
+    async def test_limit_is_the_served_models_window_unless_a_cap_is_smaller(self):
+        usage = {"claude-opus-5-5[1m]": {"contextWindow": 400_000}, "claude-haiku-5-5": {"contextWindow": 200_000}}
+        agent = self.agent([say("好"), done(model_usage=usage)])
+        self.assertEqual(agent.context_limit, 1_000_000)  # until Claude Code says otherwise
+        await agent.run_turn(self.owner("早"))
+        self.assertEqual(agent.context_limit, 400_000)
+        capped = self.agent([say("好"), done(model_usage=usage)], max_context_tokens=300_000)
+        await capped.run_turn(self.owner("早"))
+        self.assertEqual(capped.context_limit, 300_000)
 
     async def test_rate_limit_becomes_readable_error(self):
         info = RateLimitInfo(status="rejected", resets_at=int(ts("2026-10-29 15:00")), rate_limit_type="five_hour")

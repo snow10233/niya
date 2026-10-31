@@ -135,6 +135,7 @@ uv run --env-file .env niya model        # 查看、切換模型
   - Claude：`low`、`medium`、`high`、`xhigh`、`max`。Claude 不能完全不思考，設 `none`／`minimal` 會當成 `low`。
   - OpenRouter：另外還有 `none`（不思考）和 `minimal`，送出時是 `reasoning.effort`。
   - Claude 模式改強度時會重新連上 Claude Code，對話照樣接續。
+- **context 上限**：預設就是模型本身的上限。Claude 用 Claude Code 回報的窗口（Opus 是 100 萬），OpenRouter 查模型清單。想省額度可以在 `[agent] max_context_tokens` 設小一點，兩者取較小的。
 - **為什麼不像 Hermes 那樣直接拿 token 呼叫 API**：Anthropic 規定訂閱登入只能用在官方的 Claude Code 和 Anthropic 自己的 App，第三方程式不能取出或代管登入憑證，從 2026 年 1 月起也會主動封鎖。所以 niya 改成在背後執行官方 Claude Code。
 - **額度**：訂閱有 5 小時和每週的用量上限，用完時 niya 會告訴你幾點重置。設了 `ANTHROPIC_API_KEY` 就改走 API 計費。
 - **Claude 模式跟 OpenRouter 模式的差別**：
