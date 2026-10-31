@@ -41,7 +41,7 @@ class NiyaDiscord:
         self.media = MediaStore(settings.media_dir, settings.tz)
         self.progress = ProgressBubble(self._target)
         self.niya = Niya(
-            settings, Interface(channel="Discord", say=self.send, notice=self.send, confirm=self._confirm, on_busy=self._busy, progress=self.progress.add)
+            settings, Interface(channel="Discord（Discord 不顯示 markdown 表格，要整理成條列或分行）", say=self.send, notice=self.send, confirm=self._confirm, on_busy=self._busy, progress=self.progress.add)
         )
         self.channel: Any = None  # where the owner last talked; replies go there
         self.limiter = SleepReplyLimiter()
