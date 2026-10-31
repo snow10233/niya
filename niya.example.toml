@@ -7,7 +7,7 @@ model = "opus"              # claude：opus / sonnet / haiku / fable 或完整 I
 effort = ""                 # 思考強度：low / medium / high / xhigh / max（openrouter 另有 none、minimal），空白用模型預設
 timezone = "Asia/Taipei"
 max_iterations = 40         # 一回合最多幾次工具呼叫
-max_context_tokens = 200000 # 和模型上限取較小值，是控制成本的旋鈕
+# max_context_tokens = 200000 # 不設就用模型本身的上限（Opus 是 100 萬）；設了就取兩者較小的，想省額度時用
 tool_progress = true        # 呼叫工具時顯示摘要：💻 terminal，下面的 code block 放指令
 
 [discord]

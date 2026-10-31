@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from helpers import TZ, FakeLLM, reply, ts
 
-from niya.agent.budget import CONTEXT_FULL_NOTE, estimate_tokens
+from niya.agent.budget import CONTEXT_FULL_NOTE, FALLBACK_WINDOW, context_limit, estimate_tokens
 from niya.agent.compact import CONTINUE_NOTE, HANDOFF_REQUEST, MAX_CONTINUATIONS, STOPPED_NOTE
 from niya.agent.context import Conversation
 from niya.agent.loop import Agent
@@ -27,6 +27,12 @@ class EstimateTests(unittest.TestCase):
     def test_estimates_are_generous(self):
         self.assertEqual(estimate_tokens("你好"), 2)
         self.assertEqual(estimate_tokens("hello world"), 4)
+
+    def test_limit_is_the_models_window_unless_a_cap_is_smaller(self):
+        self.assertEqual(context_limit(1_000_000, 0), 1_000_000)
+        self.assertEqual(context_limit(1_000_000, 200_000), 200_000)
+        self.assertEqual(context_limit(None, 50_000), 50_000)
+        self.assertEqual(context_limit(None, 0), FALLBACK_WINDOW)
 
 
 class HardLimitTests(unittest.IsolatedAsyncioTestCase):
@@ -56,6 +62,9 @@ class HardLimitTests(unittest.IsolatedAsyncioTestCase):
         result = await agent.run_turn([InboundItem("owner", "跑", self.clock.now())])
         self.assertFalse(result.context_full)
         self.assertEqual(agent.context_limit, 1000)  # the configured cap is smaller than the model window
+        uncapped = Agent(llm=llm, model="m", tools=ToolRegistry(), conversation=self.conv, clock=self.clock)
+        await uncapped._refresh_limit()
+        self.assertEqual(uncapped.context_limit, 4000)
         agent.conversation = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
         self.assertEqual(agent.context_tokens(), 0)
 
