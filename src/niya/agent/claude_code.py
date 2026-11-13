@@ -37,10 +37,11 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 
-from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT, HARD, over
+from niya.agent.budget import CONTEXT_FULL_TOOL_TEXT, HARD, context_limit, over
+from niya.agent.compact import HANDOFF_REQUEST, CompactionError, compact_conversation
 from niya.agent.context import Conversation
 from niya.agent.loop import RecallHook, TurnResult, new_turn_id, recall_into
-from niya.agent.render import render_history
+from niya.agent.render import render_history, strip_echoed_prefix
 from niya.core.clock import Clock
 from niya.core.inbox import InboundItem, turn_source
 from niya.core.media import encoded
@@ -56,6 +57,8 @@ SERVER = "niya"
 TOOL_PREFIX = f"mcp__{SERVER}__"
 CAP_TOOL_TEXT = "錯誤：這一回合的工具呼叫已達上限，這個呼叫沒有執行。請直接向主人總結目前的進度。"
 MISSING_SESSION = "No conversation found"
+# What Claude Code reports for today's Opus, Sonnet and Haiku; every result corrects it with the served model's window.
+CLAUDE_WINDOW = 1_000_000
 LOST_CONTEXT_NOTE = "這個 session 先前的對話接續不上了（Claude Code 那邊找不到紀錄），之前的內容不在 context 裡；需要的話向主人確認。"
 LIMIT_LABELS = {
     "five_hour": "5 小時額度",
@@ -130,7 +133,7 @@ class ClaudeCodeAgent:
         config_dir: Path,
         cwd: Path,
         max_iterations: int = 40,
-        max_context_tokens: int = 200_000,
+        max_context_tokens: int = 0,
         effort: str | None = None,
         secrets: Mapping[str, str] | None = None,
         on_turn_end: Callable[[str], None] | None = None,
@@ -157,8 +160,9 @@ class ClaudeCodeAgent:
         self.tool_scope = tool_scope
         self.recorder = recorder
         self.client_factory = client_factory
-        # Claude models have windows far beyond the configured cap, so the cap is the limit.
-        self.context_limit = max_context_tokens
+        self.max_context_tokens = max_context_tokens
+        self.context_limit = context_limit(CLAUDE_WINDOW, max_context_tokens)
+        self._served_model: str | None = None
         self.conversation = conversation
         self.sdk_tools = [self._sdk_tool(tools.get(name)) for name in tools.names()]
         self._client: SDKClient | None = None
@@ -212,8 +216,10 @@ class ClaudeCodeAgent:
         turn = _Turn(turn_id, ToolContext(*(self.tool_scope or (conv.session_id, turn_id)), now=self.clock.now))
         self._turn = turn
         try:
-            client = await self._ensure_client(turn)
+            client, fresh = await self._ensure_client(turn)
             prompt = render_history(conv.messages[start:], conv.tz, conv.recall_blocks)[0]["content"]
+            if fresh:
+                prompt = conv.with_handoff(prompt)
             await client.query(prompt if isinstance(prompt, str) else _user_message(prompt))
             async for message in client.receive_response():
                 self._handle(turn, message)
@@ -239,6 +245,37 @@ class ClaudeCodeAgent:
             if self.on_turn_end:
                 self.on_turn_end(conv.session_id)
 
+    async def compact(self) -> None:
+        """Ask for the handoff inside the live Claude Code session, then the next turn starts a new one from it."""
+        conv = self.conversation
+        try:
+            client, fresh = await self._ensure_client(None)
+            if fresh:
+                raise CompactionError("Claude Code 那邊沒有這個 session 的紀錄，沒辦法寫交接")
+            texts: list[str] = []
+            error: str | None = None
+            await client.query(HANDOFF_REQUEST)
+            async for message in client.receive_response():
+                if isinstance(message, AssistantMessage) and not message.parent_tool_use_id:
+                    if message.error:
+                        error = error or ERROR_TEXT.get(message.error) or message.error
+                    else:
+                        texts += [block.text for block in message.content if isinstance(block, TextBlock)]
+                elif isinstance(message, RateLimitEvent) and message.rate_limit_info.status == "rejected":
+                    error = describe_rate_limit(message.rate_limit_info, conv.tz)
+                elif isinstance(message, ResultMessage):
+                    self._record_call(message, task="compact")
+                    self._learn_window(message)
+                    if message.is_error:
+                        error = error or message.result or message.subtype
+        finally:
+            await self._disconnect()
+        if error:
+            raise CompactionError(error)
+        summary = strip_echoed_prefix("\n\n".join(t for t in texts if t.strip()))
+        compact_conversation(conv, summary, now=self.clock.now(), context_limit=self.context_limit, prompt_tokens=self.last_prompt_tokens)
+        self.last_prompt_tokens = 0
+
     async def set_model(self, model: str) -> None:
         self.model = model
         if self._client is not None:
@@ -254,23 +291,24 @@ class ClaudeCodeAgent:
     async def aclose(self) -> None:
         await self._disconnect()
 
-    async def _ensure_client(self, turn: _Turn) -> SDKClient:
+    async def _ensure_client(self, turn: _Turn | None) -> tuple[SDKClient, bool]:
+        """The client for this session, and whether it starts a Claude Code session with no history yet."""
         conv = self.conversation
         if self._client is not None and self._client_session == conv.session_id:
-            return self._client
+            return self._client, False
         await self._disconnect()
         resume = conv.engine_session_id if conv.engine == self.engine else None
         try:
             client = await self._connect(resume)
         except ProcessError as exc:
-            if resume is None or MISSING_SESSION not in str(exc):
+            if resume is None or MISSING_SESSION not in str(exc) or turn is None:
                 raise
             # The transcript is gone (deleted, another machine, a changed config dir): go on in a fresh one.
             log.warning("Claude Code session %s not found; starting a new one", resume)
             conv.add_system_line(turn.turn_id, LOST_CONTEXT_NOTE, ts=self.clock.now())
-            client = await self._connect(None)
+            client, resume = await self._connect(None), None
         self._client, self._client_session = client, conv.session_id
-        return client
+        return client, resume is None
 
     async def _connect(self, resume: str | None) -> SDKClient:
         client = self.client_factory(self.options(resume))
@@ -304,6 +342,7 @@ class ClaudeCodeAgent:
                 # Claude Code reports API failures as a synthetic assistant message; it is not niya speaking.
                 turn.error = turn.error or ERROR_TEXT.get(message.error) or _block_text_of(message) or message.error
                 return
+            self._served_model = message.model
             if turn.pending is not None and turn.pending.message_id != message.message_id:
                 self._flush(turn)
             if turn.pending is None:
@@ -339,6 +378,7 @@ class ClaudeCodeAgent:
             self._flush(turn)
             self._remember_session(message.session_id)
             self._record_call(message)
+            self._learn_window(message)
             if message.is_error and message.subtype != "error_max_turns":
                 if turn.rate_limit is not None:
                     turn.error = describe_rate_limit(turn.rate_limit, self.conversation.tz)
@@ -370,13 +410,21 @@ class ClaudeCodeAgent:
         result = ToolOutcome(call=call, content=text, full_content=full, is_error=bool(block.is_error), images=images)
         self.conversation.add_tool_result(turn.turn_id, result, ts=self.clock.now())
 
-    def _record_call(self, message: ResultMessage) -> None:
+    def _learn_window(self, message: ResultMessage) -> None:
+        """Claude Code reports each model's context window; the one that answered sets the limit."""
+        usage = message.model_usage or {}
+        served = [u for name, u in usage.items() if self._served_model in (name.split("[")[0], u.get("canonicalModel"))]
+        window = max((int(u.get("contextWindow") or 0) for u in served or usage.values()), default=0)
+        if window:
+            self.context_limit = context_limit(window, self.max_context_tokens)
+
+    def _record_call(self, message: ResultMessage, task: str = "chat") -> None:
         if self.recorder is None:
             return
         usage = message.usage or {}
         self.recorder(
             CallRecord(
-                task="chat",
+                task=task,
                 model=f"{ENGINE}:{self.model}",
                 usage=Usage(
                     prompt_tokens=_prompt_tokens(usage),

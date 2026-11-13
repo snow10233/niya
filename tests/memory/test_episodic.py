@@ -82,6 +82,13 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("«" in h.snippet for h in hits))
         self.assertEqual(len(search_messages(self.db, "nginx")), 3)
 
+    async def test_compacted_part_of_the_current_session_can_be_recalled_again(self):
+        self.now.compact("<context_handoff>…</context_handoff>", ts=ts("2026-10-29 09:02"))
+        self.now.add_user_items("t10", [InboundItem("owner", "nginx 重啟好了沒", ts("2026-10-29 09:04"))])
+        found = (await self.call("deep_recall", query="nginx")).content
+        self.assertIn("user: «nginx» 現在怎樣", found)  # out of the context now
+        self.assertNotIn("重啟好了沒", found)  # still in it
+
     def test_short_terms_and_sentences_fall_back_to_like(self):
         hits = search_messages(self.db, "咖啡")
         self.assertEqual([h.snippet for h in hits], ["我喝«咖啡»不加糖"])

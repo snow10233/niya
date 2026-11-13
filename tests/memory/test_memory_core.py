@@ -28,7 +28,10 @@ class CurveTests(unittest.TestCase):
         self.assertGreater(fresh, 5)
         small_gain = reinforce(50, 0.5, "use") / 50
         self.assertLess(small_gain, reinforce(5, 0.5, "use") / 5)
-        self.assertEqual(reinforce(5, 0.4, "exposure"), 5)
+        # Seeing a memory without using it nudges it a little, and next to nothing while it is fresh.
+        self.assertLess(reinforce(5, 0.97, "exposure"), 5.1)
+        self.assertGreater(reinforce(5, 0.4, "exposure"), 5)
+        self.assertLess(reinforce(5, 0.4, "exposure"), reinforce(5, 0.4, "reencounter"))
         self.assertGreater(reinforce(5, 0.4, "use"), reinforce(5, 0.4, "reencounter"))
         relearned = reinforce(5, 0.2, "relearn")
         self.assertGreater(relearned, 5)

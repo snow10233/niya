@@ -1,8 +1,8 @@
 """The memory engine: encoding, automatic recall each turn, deliberate recall, and the core block.
 
 Retrieval is done by code (embeddings, full-text search, time cues and the forgetting curve), never by
-letting the model read every memory. Surfacing a memory only counts as exposure; sleep later decides
-which surfaced memories were really used and strengthens those.
+letting the model read every memory. Surfacing a memory counts only as exposure, a small nudge; sleep
+later decides which memories were really used, or brought up again by the owner, and strengthens those.
 """
 
 import json
@@ -18,6 +18,7 @@ import numpy as np
 from niya.core.clock import Clock
 from niya.core.db import Database
 from niya.memory.curve import DAY, DEFAULT, CurveParams, cue_threshold, initial_stability, r_at, recall_score, reinforce
+from niya.memory.episodic import latest_compaction
 from niya.memory.search import match_expression, query_terms, search_messages
 from niya.memory.timefmt import exact_label, time_label
 from niya.memory.timeparse import parse_time_range
@@ -33,6 +34,7 @@ MAX_CONTENT = 600
 DUPLICATE_COS = 0.95
 AUTO_MAX_ITEMS = 6
 AUTO_MAX_CHARS = 900  # about 600 tokens of Chinese
+HELD_MAX_ITEMS = 20  # came to mind but did not make the top: kept aside for recall_more
 DEEP_MEMORIES = 8
 DEEP_MESSAGES = 6
 CORE_MAX_CHARS = 1800  # about 1.2k tokens
@@ -77,6 +79,7 @@ class RecallResult:
     block: str | None
     ids: list[int]
     tip: int
+    held: int = 0
 
 
 def _memory(row) -> Memory:
@@ -97,6 +100,7 @@ class MemoryEngine:
         self.params = params
         self.index = VectorIndex.load(db, embedder.model) if embedder else VectorIndex()
         self._last_query: dict[str, np.ndarray] = {}
+        self._held: dict[str, tuple[str, list[Candidate]]] = {}  # session -> (turn, what did not fit)
 
     # --- storage -----------------------------------------------------------------------------------
 
@@ -251,10 +255,22 @@ class MemoryEngine:
         found = self.load(i for i, _ in hits)
         return [(found[i], score) for i, score in hits if i in found]
 
+    def nearest_archived(self, vector: np.ndarray, k: int = 5) -> list[tuple[Memory, float]]:
+        """Archived memories are out of the hot index; sleep still checks them before writing something anew."""
+        if self.embedder is None:
+            return []
+        hits = search_archived(self.db, self.embedder.model, vector, k)
+        found = self.load(i for i, _ in hits)
+        return [(found[i], score) for i, score in hits if i in found and found[i].state == "archived"]
+
     def review(self, memory: Memory, *, kind: str, ref_id: str, at: float, r: float | None = None) -> bool:
-        """Strengthen a memory that was really used (or met again) at `at`. Idempotent per (memory, kind, ref)."""
+        """Strengthen a memory that was really used (or met again) at `at`. Idempotent per (memory, kind, ref).
+
+        Using an archived memory, or the owner bringing it up again, is relearning: it comes back, and since it
+        had all but faded the gain is large (relearning is quicker than learning anew)."""
         r = self.r(memory, at) if r is None else r
-        weight_kind = "relearn" if memory.state == "archived" and kind == "use" else kind
+        revived = memory.state == "archived" and kind in ("use", "reencounter")
+        weight_kind = "relearn" if revived else kind
         new_s = reinforce(memory.stability, r, weight_kind, self.params)
         inserted = self.db.execute(
             "INSERT OR IGNORE INTO memory_reviews(memory_id, kind, ref_id, ts, r_before, s_before, s_after) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -262,8 +278,6 @@ class MemoryEngine:
         ).rowcount
         if not inserted:
             return False
-        # Only really using an archived memory brings it back; a nudge from below does not.
-        revived = memory.state == "archived" and kind == "use"
         self.db.execute(
             "UPDATE memories SET stability = ?, last_review_at = MAX(last_review_at, ?), review_count = review_count + 1, state = ? WHERE id = ?",
             (new_s, at, "active" if revived else memory.state, memory.id),
@@ -340,7 +354,12 @@ class MemoryEngine:
         return {r["id"] for r in rows}
 
     def _shown_in_session(self, session_id: str) -> set[int]:
-        rows = self.db.query("SELECT DISTINCT memory_id FROM retrieval_events WHERE session_id = ? AND channel = 'auto'", (session_id,))
+        """Memories that surfaced in what is still in the context; a compaction let the earlier ones go."""
+        compaction = latest_compaction(self.db, session_id)
+        rows = self.db.query(
+            "SELECT DISTINCT memory_id FROM retrieval_events WHERE session_id = ? AND channel = 'auto' AND ts > ?",
+            (session_id, compaction["ts"] if compaction else float("-inf")),
+        )
         return {r["memory_id"] for r in rows}
 
     # --- automatic recall --------------------------------------------------------------------------
@@ -385,13 +404,29 @@ class MemoryEngine:
             chosen.append(candidate)
             size += len(line)
         self.log_retrievals(((c.memory, c.r) for c in chosen), channel="auto", session_id=session_id, turn_id=turn_id)
+        shown = {c.memory.id for c in chosen}
+        held = [c for c in sorted(picked, key=lambda c: -c.score) if c.memory.id not in shown][:HELD_MAX_ITEMS]
+        self._held[session_id] = (turn_id, held)
         if not chosen and not tip:
             return RecallResult(None, [], 0)
         lines = ["<recalled_memories>", *(self._auto_line(c, now) for c in chosen)]
+        if held:
+            lines.append(f"（還有 {len(held)} 條也相關、但排在後面的記憶沒有列出；要的不在上面，先用 recall_more）")
         if tip:
             lines.append(f"（還有 {tip} 條可能相關、但想不太起來的記憶，需要時用 deep_recall）")
         lines.append("</recalled_memories>")
-        return RecallResult("\n".join(lines), [c.memory.id for c in chosen], tip)
+        return RecallResult("\n".join(lines), [c.memory.id for c in chosen], tip, len(held))
+
+    def recall_more(self, *, session_id: str, turn_id: str) -> str:
+        """The rest of what came to mind this turn: the memory's waiting room, no new search needed."""
+        held_turn, held = self._held.get(session_id, ("", []))
+        if held_turn != turn_id or not held:
+            return "這一回合沒有其他浮現的記憶了。要找別的，用 deep_recall 以關鍵字搜尋。"
+        del self._held[session_id]
+        now = self.clock.now()
+        self.log_retrievals(((c.memory, c.r) for c in held), channel="held", session_id=session_id, turn_id=turn_id)
+        lines = ["這一回合也浮現了、但排在後面的記憶（依相關程度排序）：", *(self._exact_line(c.memory, now) for c in held)]
+        return "\n".join(lines) + "\n（這裡沒有要找的，再用 deep_recall 以關鍵字搜尋。）"
 
     def _auto_line(self, candidate: Candidate, now: float) -> str:
         m = candidate.memory
@@ -436,14 +471,17 @@ class MemoryEngine:
         scored.sort(key=lambda item: -item[0])
         memories = [m for _, m in scored[:DEEP_MEMORIES]]
         self.log_retrievals(((m, self.r(m, now)) for m in memories), channel="deep", session_id=session_id, turn_id=turn_id)
-        hits = search_messages(self.db, query, since=since, until=until, exclude_session=session_id, limit=DEEP_MESSAGES)
+        compaction = latest_compaction(self.db, session_id)
+        hits = search_messages(
+            self.db, query, since=since, until=until, exclude_session=session_id, in_context_after=compaction["upto_message_id"] if compaction else 0, limit=DEEP_MESSAGES
+        )
         if not memories and not hits:
             return f"怎麼想都想不起「{query}」。可以換個關鍵字，或放寬時間範圍。"
         lines: list[str] = []
         if memories:
             lines += ["記憶：", *(self._exact_line(m, now) for m in memories)]
         if hits:
-            lines += ["以前的對話（都是先前的 session，不在目前的 context 裡）："]
+            lines += ["以前的對話（都不在目前的 context 裡）："]
             lines += [f"- msg#{h.id} [{exact_label(h.ts, None, self.tz)}] {'niya' if h.role == 'assistant' else _speaker(h.speaker)}: {h.snippet}" for h in hits]
         return "\n".join(lines)
 

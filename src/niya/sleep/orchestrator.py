@@ -50,6 +50,8 @@ class RunStats:
     memories: int = 0
     reencounters: int = 0
     used: int = 0
+    mentioned: int = 0
+    revived: int = 0
     labile: int = 0
     archived: int = 0
     vectors: int = 0
@@ -120,6 +122,8 @@ async def consolidate(
         stats.memories += result.memories
         stats.reencounters += result.reencounters
         stats.used += result.used
+        stats.mentioned += result.mentioned
+        stats.revived += result.revived
         stats.labile += result.labile
         stats.titles += result.titles
         stats.new_memories += result.new_memories

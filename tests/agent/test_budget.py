@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 from helpers import TZ, FakeLLM, reply, ts
 
-from niya.agent.budget import CONTEXT_FULL_NOTE, estimate_tokens
+from niya.agent.budget import CONTEXT_FULL_NOTE, FALLBACK_WINDOW, context_limit, estimate_tokens
+from niya.agent.compact import CONTINUE_NOTE, HANDOFF_REQUEST, MAX_CONTINUATIONS, STOPPED_NOTE
 from niya.agent.context import Conversation
 from niya.agent.loop import Agent
 from niya.app.brain import Brain
@@ -26,6 +27,12 @@ class EstimateTests(unittest.TestCase):
     def test_estimates_are_generous(self):
         self.assertEqual(estimate_tokens("你好"), 2)
         self.assertEqual(estimate_tokens("hello world"), 4)
+
+    def test_limit_is_the_models_window_unless_a_cap_is_smaller(self):
+        self.assertEqual(context_limit(1_000_000, 0), 1_000_000)
+        self.assertEqual(context_limit(1_000_000, 200_000), 200_000)
+        self.assertEqual(context_limit(None, 50_000), 50_000)
+        self.assertEqual(context_limit(None, 0), FALLBACK_WINDOW)
 
 
 class HardLimitTests(unittest.IsolatedAsyncioTestCase):
@@ -55,42 +62,106 @@ class HardLimitTests(unittest.IsolatedAsyncioTestCase):
         result = await agent.run_turn([InboundItem("owner", "跑", self.clock.now())])
         self.assertFalse(result.context_full)
         self.assertEqual(agent.context_limit, 1000)  # the configured cap is smaller than the model window
+        uncapped = Agent(llm=llm, model="m", tools=ToolRegistry(), conversation=self.conv, clock=self.clock)
+        await uncapped._refresh_limit()
+        self.assertEqual(uncapped.context_limit, 4000)
         agent.conversation = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
         self.assertEqual(agent.context_tokens(), 0)
 
 
-class SoftLimitTests(unittest.IsolatedAsyncioTestCase):
-    async def test_soft_line_ends_the_session_and_tells_the_next_turn(self):
-        db = Database(":memory:")
-        clock = FakeClock(ts("2026-10-29 09:00"))
-        conv = Conversation.start_new(db, now=clock.now(), tz=TZ, system_prompt="S")
-        llm = FakeLLM(reply("聊完了", prompt_tokens=760), reply("我在", prompt_tokens=100))
-        agent = Agent(llm=llm, model="m", tools=ToolRegistry(), conversation=conv, clock=clock, max_context_tokens=1000)
-        inbox = Inbox(db, clock)
-        events = []
+class CompactionTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.db = Database(":memory:")
+        self.clock = FakeClock(ts("2026-10-29 09:00"))
+        self.conv = Conversation.start_new(self.db, now=self.clock.now(), tz=TZ, system_prompt="S")
+        self.inbox = Inbox(self.db, self.clock)
+        self.reports = []
+        self.fallbacks = []
 
-        async def context_full(used, progress):
-            events.append(("context_full", used))
-            agent.conversation = Conversation.start_new(db, now=clock.now(), tz=TZ, system_prompt="S")
-            return f"上一段對話在 2026-10-29 (四) 09:00 因為 context 快滿了（{used}%）而結束"
+    def brain(self, llm, tools=None):
+        self.agent = Agent(llm=llm, model="m", tools=tools or ToolRegistry(), conversation=self.conv, clock=self.clock, max_context_tokens=1000)
+
+        async def fallback(used, progress):
+            self.fallbacks.append((used, progress))
+
+        async def report(text):
+            self.reports.append(text)
 
         async def ignore(text):
             pass
 
-        brain = Brain(inbox=inbox, control=SimpleNamespace(agent=agent), egress=EgressGate(db, now=clock.now, detector=EgressDetector()), reply=ignore, report=ignore, on_context_full=context_full)
+        brain = Brain(
+            inbox=self.inbox,
+            control=SimpleNamespace(agent=self.agent),
+            egress=EgressGate(self.db, now=self.clock.now, detector=EgressDetector()),
+            reply=ignore,
+            report=report,
+            on_compact_failed=fallback,
+        )
         task = asyncio.create_task(brain.run())
         self.addAsyncCleanup(lambda: asyncio.gather(task, return_exceptions=True))
-        inbox.put("owner", "很長的對話")
+        self.addCleanup(task.cancel)
+        return brain
+
+    async def say(self, brain, text):
+        self.inbox.put("owner", text)
         await asyncio.sleep(0)
         await asyncio.wait_for(brain.idle(), 2)
-        self.assertEqual(events, [("context_full", 76)])
-        inbox.put("owner", "在嗎")
-        await asyncio.sleep(0)
+
+    async def test_soft_line_compacts_and_the_session_goes_on_from_the_handoff(self):
+        llm = FakeLLM(reply("聊完了", prompt_tokens=760), reply("交接：主人在聊京都行程，還沒訂車票", prompt_tokens=780), reply("我在", prompt_tokens=300))
+        brain = self.brain(llm)
+        await self.say(brain, "很長的對話")
+        request = llm.requests[1]
+        self.assertEqual((request["task"], request["messages"][-1]["content"]), ("compact", HANDOFF_REQUEST))
+        self.assertEqual(request["messages"][:-1], llm.requests[0]["messages"] + [{"role": "assistant", "content": "[2026-10-29 (四) 09:00] niya: 聊完了"}])
+        self.assertEqual(self.reports, ["（context 用了 76%，前面的對話換成交接摘要了）"])
+        self.assertEqual(self.fallbacks, [])
+        await self.say(brain, "在嗎")
+        messages = llm.requests[2]["messages"]
+        self.assertEqual(len(messages), 2)  # system prompt + the handoff riding on the new turn
+        text = messages[1]["content"]
+        self.assertTrue(text.startswith("<context_handoff>"))
+        self.assertIn("# 交接摘要\n交接：主人在聊京都行程，還沒訂車票", text)
+        self.assertIn("[2026-10-29 (四) 09:00] user: 很長的對話\n[2026-10-29 (四) 09:00] niya: 聊完了", text)
+        self.assertTrue(text.endswith("</context_handoff>\n\n[2026-10-29 (四) 09:00] user: 在嗎"))
+        # Nothing is lost from the record, and a reopened session renders the same way.
+        self.assertEqual([r["role"] for r in self.db.query("SELECT role FROM messages ORDER BY id")], ["user", "assistant", "user", "assistant"])
+        self.assertEqual(Conversation(self.db, self.conv.session_id, TZ).api_messages(), messages + [{"role": "assistant", "content": "[2026-10-29 (四) 09:00] niya: 我在"}])
+
+    @staticmethod
+    def cut():
+        """A turn whose tool output overflows the context, then the handoff it writes."""
+        return [reply(None, ("c1", "dump", "{}"), prompt_tokens=800), reply("做到一半，下一步改設定", prompt_tokens=1010), reply("交接：下一步改設定", prompt_tokens=1020)]
+
+    async def test_cut_short_turn_carries_on_by_itself(self):
+        llm = FakeLLM(*self.cut(), reply("改好了", prompt_tokens=300))
+        brain = self.brain(llm, ToolRegistry([big_tool(150)]))
+        await self.say(brain, "幫我把設定改完")
         await asyncio.wait_for(brain.idle(), 2)
-        task.cancel()
-        first_line = llm.requests[1]["messages"][-1]["content"].splitlines()[0]
-        self.assertIn("system: 上一段對話在 2026-10-29 (四) 09:00 因為 context 快滿了（76%）而結束", first_line)
-        self.assertEqual(len(llm.requests[1]["messages"]), 2)  # system prompt + the new turn only
+        self.assertEqual(len(llm.requests), 4)
+        last_turn = llm.requests[3]["messages"][1]["content"]
+        self.assertIn("交接：下一步改設定", last_turn)
+        self.assertTrue(last_turn.endswith(f"system: {CONTINUE_NOTE}"))
+        self.assertEqual(brain.continued, 1)
+
+    async def test_continuations_stop_at_the_cap_until_the_owner_speaks(self):
+        llm = FakeLLM(*[r for _ in range(MAX_CONTINUATIONS + 1) for r in self.cut()], reply("好", prompt_tokens=300))
+        brain = self.brain(llm, ToolRegistry([big_tool(150)]))
+        await self.say(brain, "幫我把設定改完")
+        await asyncio.wait_for(brain.idle(), 2)
+        self.assertEqual(len(llm.requests), 3 * (MAX_CONTINUATIONS + 1))
+        self.assertEqual(self.reports[-1], STOPPED_NOTE)
+        self.assertEqual(self.inbox.pending(), [])
+        await self.say(brain, "繼續")
+        self.assertEqual(brain.continued, 0)
+
+    async def test_failed_compaction_falls_back_to_an_early_sleep(self):
+        llm = FakeLLM(reply("聊完了", prompt_tokens=760), reply("", prompt_tokens=780))
+        brain = self.brain(llm)
+        await self.say(brain, "很長的對話")
+        self.assertEqual(self.fallbacks, [(76, "")])
+        self.assertIsNone(self.db.one("SELECT id FROM compactions"))
 
 
 if __name__ == "__main__":

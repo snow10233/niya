@@ -30,6 +30,7 @@ REMEMBER_PARAMETERS = {
 }
 DEEP_RECALL_DESCRIPTION = (
     "用力回想：搜尋所有記憶（包括已經很淡、要很用力才想得起來的）和以前的對話，結果附精確時間。"
+    "<recalled_memories> 最後寫了還有幾條沒列出時，先用 recall_more 看，那裡沒有再用這個。"
     "用關鍵字查效果最好，例如「咖啡」「nginx 502」，不要整句話。since / until 可限定時間（YYYY-MM-DD 或 YYYY-MM-DD HH:MM）。"
     "結果的 ref（m12 是記憶、msg#123 是原始訊息）可以交給 recall_related 往下挖。"
 )
@@ -42,6 +43,11 @@ DEEP_RECALL_PARAMETERS = {
     },
     "required": ["query"],
 }
+MORE_DESCRIPTION = (
+    "看這一回合也浮現了、但排在後面沒有列出的記憶（<recalled_memories> 最後會寫還有幾條）。"
+    "不用想關鍵字，比 deep_recall 快；這裡沒有要找的，再用 deep_recall。"
+)
+MORE_PARAMETERS: dict[str, Any] = {"type": "object", "properties": {}}
 TIMELINE_DESCRIPTION = "翻日記：列出某段時間發生的事和記下的事，附精確時間。since / until 可以是 YYYY-MM-DD，也可以是「上週」「昨天」「10 月」這類說法（只給 since 時代表那一段）。"
 TIMELINE_PARAMETERS = {
     "type": "object",
@@ -117,6 +123,9 @@ def memory_tools(engine: MemoryEngine) -> list[Tool]:
         until = parse_bound(args.get("until"), tz, end=True)
         return await engine.deep_recall(query, session_id=ctx.session_id, turn_id=ctx.turn_id, since=since, until=until)
 
+    async def recall_more(args: dict[str, Any], ctx: ToolContext) -> str:
+        return engine.recall_more(session_id=ctx.session_id, turn_id=ctx.turn_id)
+
     async def recall_timeline(args: dict[str, Any], ctx: ToolContext) -> str:
         now = ctx.now()
         since, until = _span(str(args.get("since") or ""), now, tz)
@@ -135,6 +144,7 @@ def memory_tools(engine: MemoryEngine) -> list[Tool]:
     options: dict[str, Any] = dict(toolset="memory", timeout_s=30, max_result_chars=8000)
     return [
         Tool(name="remember", description=REMEMBER_DESCRIPTION, parameters=REMEMBER_PARAMETERS, handler=remember, **options),
+        Tool(name="recall_more", description=MORE_DESCRIPTION, parameters=MORE_PARAMETERS, handler=recall_more, parallel_safe=True, **options),
         Tool(name="deep_recall", description=DEEP_RECALL_DESCRIPTION, parameters=DEEP_RECALL_PARAMETERS, handler=deep_recall, parallel_safe=True, **options),
         Tool(name="recall_timeline", description=TIMELINE_DESCRIPTION, parameters=TIMELINE_PARAMETERS, handler=recall_timeline, parallel_safe=True, **options),
         Tool(name="recall_related", description=RELATED_DESCRIPTION, parameters=RELATED_PARAMETERS, handler=recall_related, parallel_safe=True, **options),

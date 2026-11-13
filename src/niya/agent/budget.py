@@ -1,12 +1,14 @@
-"""How full the context is. niya never compresses its context: past the soft line it goes to sleep (for now:
-a new session) after the turn; past the hard line it stops calling tools mid-turn and wraps up."""
+"""How full the context is. Past the soft line the context is compacted after the turn (see compact.py); past
+the hard line niya stops calling tools mid-turn, reports her progress, and carries on once it is compacted."""
 
 from collections.abc import Iterable
 
 SOFT = 0.75
 HARD = 0.90
-CONTEXT_FULL_NOTE = "context 快滿了，先停下工具，直接向主人交代目前的進度和還沒做完的事。"
-CONTEXT_FULL_TOOL_TEXT = "錯誤：context 快滿了，這個呼叫沒有執行。請直接向主人交代目前的進度和還沒做完的事。"
+# Used when neither the model's window nor a cap is known.
+FALLBACK_WINDOW = 200_000
+CONTEXT_FULL_NOTE = "context 快滿了，先停下工具，向主人交代目前做到哪、接下來要做什麼；context 整理好之後會自動接著做。"
+CONTEXT_FULL_TOOL_TEXT = "錯誤：context 快滿了，這個呼叫沒有執行。請先向主人交代目前做到哪、接下來要做什麼；context 整理好之後會自動接著做。"
 
 
 def estimate_tokens(text: str) -> int:
@@ -25,3 +27,10 @@ def over(tokens: int, limit: int, line: float) -> bool:
 
 def percent(tokens: int, limit: int) -> int:
     return round(100 * tokens / limit) if limit else 0
+
+
+def context_limit(window: int | None, cap: int) -> int:
+    """The model's own window, or the configured cap when that is smaller (0 means no cap)."""
+    if window and cap:
+        return min(window, cap)
+    return window or cap or FALLBACK_WINDOW

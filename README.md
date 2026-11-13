@@ -3,7 +3,7 @@
 會睡覺、會遺忘、有時間感的長期運行 agent。跑在 VPS 上，透過 Discord 跟主人對話。
 
 - 每則訊息都帶時間戳，niya 知道每件事是什麼時候發生的。
-- 記憶照遺忘曲線衰退，真的用上才會變牢。
+- 記憶照遺忘曲線衰退；真的用上、或主人又提起才會明顯變牢，只是浮現也會稍微變牢。
 - 一天睡兩次，把醒著時的經歷切成事件、整理成記憶，再清空 context。
 
 目前完成：
@@ -15,16 +15,17 @@
   - **對話分段**：閒置 30 分鐘或 session 結束就切一段；鬧鐘和背景程序觸發的回合各自一段。之後睡眠時會以段為單位整理。
   - **全文搜尋**：`deep_recall` 用關鍵字搜尋以前的對話，中文和英文都能找；`recall_related(msg#id)` 看前後文。
   - **持久化 inbox**：主人的訊息、背景程序結束的通知都先進資料庫，重啟不會遺失，一次處理一回合。
-  - **context 用量門檻**：回合中超過 90% 就停下工具、交代進度；回合結束時超過 75% 就開新 session。睡眠做好以後，這裡會改成提早睡。
+  - **context 用量門檻**：回合中超過 90% 就停下工具、交代進度；回合結束時超過 75% 就壓縮 context（見 M6a 的「context 滿了」）。
 - **M4 鬧鐘**：
   - niya 用 `alarm` 工具自己設提醒，支援一次性和 cron 重複。時間到了會叫醒 niya 跑一回合，去提醒你或去做某件事。
   - niya 沒在運作時錯過的鬧鐘：提醒類 6 小時內、任務類 24 小時內補響，超過就讓 niya 告訴你錯過了。
   - REPL 裡用 `/alarms` 查看，`/alarms cancel <id>` 取消。
 - **M5 記憶與時間**：
-  - **遺忘曲線**：每條記憶有自己的穩定度 S，R 隨時間下降。重要度只決定初始 S，之後只有真的用上才會變牢（睡眠時判斷，M6）。
+  - **遺忘曲線**：每條記憶有自己的穩定度 S，R 隨時間下降。重要度只決定初始 S，之後靠睡眠時的判斷變牢（M6）：真的用上最多，主人又提起次之，只是浮現在眼前最少；記憶越接近忘掉時碰到，增加得越多。
   - **時間模糊**：資料庫存精確時間，但 niya 看到的時間標籤會隨 R 變粗：「昨天下午 2 點」→「昨天」→「10 月下旬」→「上個月」→「2025 年秋天」。
   - **記住**：`remember` 刻意記下偏好、事實、計畫。白天記的是「還不牢」的狀態，要等睡覺整理（M6）。
   - **每回合自動回想**：用 embedding、全文搜尋和時間線索（「昨天」「上週二」）找候選，記憶越淡就要越強的線索才想得起來。差一點想起來的會用「話到嘴邊」提示 niya 去用力想。
+  - **記憶暫留區**：自動回想只放排名前 6 條（最多 900 字）。也過了門檻、但排在後面的最多 20 條先暫留，`<recalled_memories>` 最後會寫還有幾條；niya 要的不在前 6 條裡時，會先用 `recall_more` 拿，那裡也沒有才用 `deep_recall` 搜尋。暫留區只留到這一回合結束。
   - **用力回想**：`deep_recall`（包含已封存的記憶和以前的對話，附精確時間）、`recall_timeline`（翻日記）、`recall_related`（從一條記憶往下挖）。
   - **記憶區塊**：每次開新 session，system prompt 會附上「關於主人」「我知道的事」「近期計畫」（含鬧鐘）。
   - `niya memory list` / `niya memory show <id>` 看每條記憶的 S、R 和浮現紀錄。
@@ -32,19 +33,25 @@
 - **M6a 睡眠**：
   - **時間**：每天 03:00 夜間睡眠、13:00 午睡，整理完就醒，不睡滿。早上到午睡前都沒對話，就跳過午睡；niya 沒在運作而錯過太久的時段，不會事後補睡。
   - **NREM**：
-    - 每個對話片段交給模型一次（不帶工具），切成事件、萃取事實、偏好和計畫，並判斷白天浮現的記憶哪些真的用上（用上的才強化）。
+    - 每個對話片段交給模型一次（不帶工具），切成事件、萃取事實、偏好和計畫，並判斷白天浮現的記憶哪些真的用上、哪些舊記憶被主人又提起。
+    - 強化的權重：用上 1.0、又提起 0.6、浮現但沒用上 0.2。每次醒來的記憶區塊不算浮現，不然排在前面的會一直替自己續命。
     - 新資訊推翻舊記憶時，舊的會標上有效期限。
     - 程式會驗證切分結果，不合法就退回「整段算一個事件」。
     - 每段在一個 transaction 裡寫完，中斷不會留下半套。
   - **白天記的記憶**：睡過一覺才轉成正式記憶，S 才拿到依重要度應得的值。
   - **夜間另外做的事**：日摘要（當天的事件都連到它）、資料庫備份（留 7 份）、夢境日誌（`/dream`）。
-  - **修剪**：R 低於 0.30 的記憶封存，之後只有用力回想才找得到。
+  - **修剪**：R 低於 0.30 的記憶封存，不會再自動浮現。
+  - **想起來**：封存的記憶被用力回想找到並用上、主人又提起，或睡覺時要寫下的新記憶其實就是它，都會讓它回來，不另記一條新的。這算重新學會（權重 1.0），而且因為已經快忘了，S 會一次增加很多。
   - **起床**：整理完才清空 context、開新 session、重建記憶區塊，第一則訊息前會附一行「午睡醒來（整理了…）」。發現沒設鬧鐘的計畫，會提醒 niya 判斷要不要補。
-  - **context 滿了**：說「有點累了，先睡一下」就提早去睡。午睡前提早睡算這天的午睡，午睡後提早睡算這晚的夜間睡眠，被頂替的時段不再睡。醒來時會帶上「睡前正在做」的進度。
+  - **context 滿了**：不提早睡，改成壓縮 context，工作不會做到一半斷掉。
+    - **回合結束時超過 75%**：niya 在同一個 context 裡自己寫一份交接摘要：正在做什麼、做到哪、決定了什麼、還沒做的事，以及之後用得到的路徑、指令和數字。之後送給模型的只有這份摘要和最近的對話原文（主人和 niya 說的話，最多 context 上限的 25%）。
+    - **做到一半超過 90%**：先停下工具、交代進度，壓縮完自動接著做，不用主人開口。同一個請求最多自動接續 3 次，之後停下來等主人。
+    - **原始紀錄不動**：只改送給模型看的內容。每則訊息照樣留在資料庫，睡覺時照常整理；壓縮掉的部分用 `deep_recall` 找得到，那時浮現過的記憶也能再自動浮現。
+    - **壓縮失敗才提早睡**：說「有點累了，先睡一下」。午睡前提早睡算這天的午睡，午睡後提早睡算這晚的夜間睡眠，被頂替的時段不再睡。醒來時會帶上「睡前正在做」的進度。
   - **睡覺中**：訊息先排隊；`/wake` 或提醒類鬧鐘會叫醒 niya，但不清空 context，閒下來後（被 `/wake` 叫醒要 30 分鐘，被鬧鐘叫醒要 5 分鐘）再續睡。
   - **REPL 指令**：`/status`、`/sleep [nap|night]`、`/wake`、`/dream`。
   - **快轉時鐘**：`niya repl --fake-clock "2026-10-29 11:30"` 搭配 `/advance 90m`，不用真的等到 13:00 也能測試睡眠。
-  - **睡眠用的模型**：預設和對話相同，可以用 `[sleep] model` 另外指定便宜的模型。
+  - **睡眠用的模型**：預設和對話相同，可以用 `[sleep] model` 另外指定便宜的模型。範例設定用 Opus medium：比 max 便宜約六倍、快十倍，low 省不多、判斷卻變差。
 - **M6b REM 與長期記憶**：
   - **週、月摘要**：夜間睡眠會檢查最近一個完整的週和月有沒有摘要，沒有就補做。日摘要屬於週摘要，週摘要屬於月摘要。越上層的摘要 S 越大（週 ×3、月 ×6），越不容易忘。
   - **擴散強化**：一個事件被真的用上時，它所屬的日、週、月摘要也會小幅變牢。
@@ -93,6 +100,7 @@
 - **Discord**：
   - **收訊息**：`niya run` 以 Discord bot 常駐，只回應主人。私訊之外，也可以設定幾個頻道。其他帳號、bot 一律忽略。
   - **送訊息**：先遮蔽密鑰，再依 code block 切成 2000 字以內，超過 6000 字改傳 `.md` 附檔。niya 處理中會顯示「正在輸入」。
+  - **格式**：Discord 不顯示 markdown 表格，system prompt 會請 niya 改用條列或分行。
   - **工具摘要**：niya 每呼叫一次工具，就顯示一行「emoji 工具名稱」，下面用 code block 放指令、路徑或查詢，最多 40 字，規則照 Hermes。
     - 連續呼叫同一個工具時共用一行標題；同樣的呼叫重複時記成 `(×2)`。
     - 這些摘要都在同一則訊息裡，有新的呼叫就編輯它。超過長度就接著開新的一則；niya 說完話之後的呼叫，也會開新的一則，放在那句話下面。
@@ -127,12 +135,13 @@ uv run --env-file .env niya model        # 查看、切換模型
   - Claude：`low`、`medium`、`high`、`xhigh`、`max`。Claude 不能完全不思考，設 `none`／`minimal` 會當成 `low`。
   - OpenRouter：另外還有 `none`（不思考）和 `minimal`，送出時是 `reasoning.effort`。
   - Claude 模式改強度時會重新連上 Claude Code，對話照樣接續。
+- **context 上限**：預設就是模型本身的上限。Claude 用 Claude Code 回報的窗口（Opus 是 100 萬），OpenRouter 查模型清單。想省額度可以在 `[agent] max_context_tokens` 設小一點，兩者取較小的。
 - **為什麼不像 Hermes 那樣直接拿 token 呼叫 API**：Anthropic 規定訂閱登入只能用在官方的 Claude Code 和 Anthropic 自己的 App，第三方程式不能取出或代管登入憑證，從 2026 年 1 月起也會主動封鎖。所以 niya 改成在背後執行官方 Claude Code。
 - **額度**：訂閱有 5 小時和每週的用量上限，用完時 niya 會告訴你幾點重置。設了 `ANTHROPIC_API_KEY` 就改走 API 計費。
 - **Claude 模式跟 OpenRouter 模式的差別**：
   - 工具迴圈和 API context 由 Claude Code 管。niya 的工具以 MCP 的形式提供，模型看到的名稱是 `mcp__niya__terminal` 這類。
   - 所有工具一樣經過黑名單、外傳檢查和密鑰遮蔽。每則訊息也一樣存進 niya 的資料庫。
-  - Claude Code 的自動壓縮已經關掉，context 滿了照計畫提早睡覺。
+  - Claude Code 的自動壓縮已經關掉，context 滿了由 niya 自己寫交接摘要，再另開一個 Claude Code session 從摘要接著聊。
 - 記憶用的 embedding（M5）還是走 OpenRouter。
 - **睡眠用的模型**：`[sleep] model` 和 `[sleep] effort` 可以另外指定。
   - 除了 claude、openrouter，也可以用 DeepSeek 官方 API：`model = "deepseek:deepseek-flash"`，金鑰放 `DEEPSEEK_API_KEY`。
@@ -143,14 +152,15 @@ uv run --env-file .env niya model        # 查看、切換模型
 ## 從 Hermes 搬家
 
 把 Hermes 用過的 agent 帶過來：對話照時間重新「活」一遍，整理成 niya 的記憶；筆記拆開來分層；技能換成 niya 的工具再搬；人格從 SOUL.md 來。
-資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db`、`memories/` 和 `skills/`。niya 只讀，不會改它。
+資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db`、`memories/` 和 `skills/`；排程另外用 `cron/jobs.json`。niya 只讀，不會改它。
 
 ```sh
 uv run --env-file .env niya hermes import ~/hermes-copy      # 1. 匯入對話（只寫原始紀錄）
 uv run --env-file .env niya hermes replay                    # 2. 回放：每回合自動回想，每天 03:00、13:00 睡覺整理
 uv run --env-file .env niya hermes notes ~/hermes-copy       # 3. 拆筆記，產生審核清單和人格草稿
 uv run --env-file .env niya hermes skills ~/hermes-copy      # 4. 讀技能：事實接在審核清單後面，技能列成搬家清單
-uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 5. 看過、改過清單之後一起匯入
+uv run --env-file .env niya hermes cron ~/hermes-copy/cron/jobs.json   # 5. 排程列成搬家清單
+uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 6. 看過、改過清單之後一起匯入
 ```
 
 - **匯入**：
@@ -191,6 +201,14 @@ uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 5. 看�
   - 搬家清單是 `hermes-skills.md`，改標籤決定搬不搬；要調整內容就直接改 `hermes-skills/` 裡的檔案。Hermes 內建、沒改過的技能只列出來，預設不搬。
   - 模型回的不是 JSON 會再試兩次。結果存在 `hermes-skills.json`，`--only 名稱,名稱` 可以只重讀幾個，其他沿用上次的結果。
   - apply 時把 `[move]` 的技能搬進 `$NIYA_HOME/skills/`，每個檔案都用最嚴格的規則掃描過；niya 已經有的同名技能不動，所以可以重跑。
+- **排程**：
+  - Hermes 的排程分成三種去處，列在 `hermes-cron.md` 給主人勾：
+    - `[timer]`：只跑腳本的（Hermes 的 no_agent 排程）變成 systemd timer，用 `niya run-job` 照原本的規則跑，腳本不用改。
+    - `[alarm]`：要 agent 做的變成 niya 的鬧鐘，原本的 prompt 寫在備註裡；每 N 天這種間隔會換成 cron 規則。
+    - `[drop]`：Hermes 上已經停用的、用到不搬的技能的（例如做夢），預設不搬。
+  - 投遞目標照原本的：`origin` 是建立排程的那個 Discord 討論串，`local` 不發。
+  - apply 時鬧鐘直接寫進 niya.db；timer 的設定檔和 `install.sh` 寫到 `$NIYA_HOME/hermes-cron/`。切換那天在 VPS 上先停掉 Hermes，再執行 `install.sh`（Hermes 還在跑的話它會拒絕，免得同一個排程跑兩次）。
+  - 換成比較新的 `jobs.json` 再跑一次 `niya hermes cron`，已經勾好的標籤會保留。
 
 ## 安全機制
 
@@ -279,6 +297,19 @@ systemctl restart niya
 
 - 新程式要重啟才會生效。重啟前 niya 如果正在睡覺整理，下次醒著閒下來時會續睡，已整理完的片段不會重做。
 - service 檔用複製的，不用 `systemctl link` 連到 repo：niya 能改 `/opt/niya`，用複製的話，repo 裡的 service 檔被改動，也不會在你不知情時改掉 systemd 的設定（例如記憶體上限）。
+
+### 5. 定時跑的腳本
+
+不需要 niya 判斷、只要定時跑的腳本（監控、資料更新、產線），放在 systemd timer 裡用 `niya run-job` 跑：
+
+```sh
+niya run-job --name "snowbox 健康監控" --deliver discord:<頻道 ID> -- /usr/bin/python3 /opt/watch/check.py
+```
+
+- 腳本有輸出，才原樣發到 `--deliver` 的頻道；沒有輸出，或最後一行是 `{"wakeAgent": false}`，就什麼都不發。發出去之前會先遮蔽密鑰。
+- 腳本失敗（exit 不是 0）或超過 `--timeout` 秒（預設 3600），會把 exit code 和最後的 stderr、stdout 發到 `--on-failure`（預設跟 `--deliver` 同一個頻道）。
+- 腳本拿到的是 timer 的環境變數，但不包含 niya 的密鑰；預設在腳本所在的資料夾執行，可以用 `--cwd` 改。
+- 這和 Hermes 的 no_agent 排程是同一套規則，所以從 Hermes 搬來的腳本不用改。要 niya 判斷或回報的事，用鬧鐘（`alarm` 工具）。
 
 ## 送給模型的格式
 

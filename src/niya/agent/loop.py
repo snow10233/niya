@@ -5,9 +5,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, estimate_all, over
+from niya.agent.budget import CONTEXT_FULL_NOTE, HARD, context_limit, estimate_all, over
+from niya.agent.compact import HANDOFF_REQUEST, compact_conversation
 from niya.agent.context import Conversation
-from niya.agent.render import images_of
+from niya.agent.render import images_of, strip_echoed_prefix
 from niya.core.clock import Clock
 from niya.core.inbox import InboundItem, turn_source
 from niya.core.media import IMAGE_TOKENS
@@ -79,7 +80,7 @@ class Agent:
         conversation: Conversation,
         clock: Clock,
         max_iterations: int = 40,
-        max_context_tokens: int = 200_000,
+        max_context_tokens: int = 0,
         effort: str | None = None,
         on_turn_end: Callable[[str], None] | None = None,
         recall: RecallHook | None = None,
@@ -98,7 +99,7 @@ class Agent:
         # (session, turn) the tools act under. Subagents use the parent's: shared taint, and paused uploads the owner can approve.
         self.tool_scope = tool_scope
         self.max_context_tokens = max_context_tokens
-        self.context_limit = max_context_tokens
+        self.context_limit = context_limit(None, max_context_tokens)
         self._limit_for: str | None = None
         self.conversation = conversation
 
@@ -152,6 +153,24 @@ class Agent:
         pictures = sum(len(images_of(m)) for m in added)
         return self.last_prompt_tokens + estimate_all(m.api_content if m.api_content is not None else m.content for m in added) + pictures * IMAGE_TOKENS
 
+    async def compact(self) -> None:
+        """The model writes its own handoff from the full context, and the session goes on from that."""
+        conv = self.conversation
+        schemas = self.tools.schemas() or None
+        result = await self.llm.chat(
+            model=self.model,
+            messages=[*conv.api_messages(), {"role": "user", "content": HANDOFF_REQUEST}],
+            # Tools stay declared so the cached prefix still matches; none may be called.
+            tools=schemas,
+            tool_choice="none" if schemas else None,
+            task="compact",
+            reasoning={"effort": self.effort} if self.effort else None,
+        )
+        summary = strip_echoed_prefix(result.content or "")
+        compact_conversation(conv, summary, now=self.clock.now(), context_limit=self.context_limit, prompt_tokens=result.usage.prompt_tokens)
+        self.last_prompt_tokens = estimate_all([conv.system_prompt, conv.handoff])
+        self._counted = len(conv.messages)
+
     async def set_model(self, model: str) -> None:
         self.model = model
 
@@ -184,9 +203,9 @@ class Agent:
         if lookup is not None:
             try:
                 window = await lookup(self.model)
-            except Exception:  # an unknown window just means the configured cap applies
+            except Exception:  # an unknown window just means the configured cap (or the fallback) applies
                 window = None
-        self.context_limit = min(window or self.max_context_tokens, self.max_context_tokens)
+        self.context_limit = context_limit(window, self.max_context_tokens)
         self._limit_for = self.model
 
     async def _wrap_up(self, turn_id: str, schemas: list[dict[str, Any]] | None, note: str, iterations: int, *, context_full: bool = False) -> TurnResult:

@@ -22,6 +22,7 @@ EMOJI = {
     "web_search": "🔍",
     "web_extract": "📄",
     "remember": "🧠",
+    "recall_more": "🧠",
     "deep_recall": "🧠",
     "recall_timeline": "🧠",
     "recall_related": "🧠",
