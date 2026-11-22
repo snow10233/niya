@@ -134,6 +134,7 @@ class OpenRouterClient:
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.http = http or httpx.AsyncClient(timeout=timeout)
+        self.timeout = timeout
         self.recorder = recorder
         self.max_retries = max_retries
         self.sleep = sleep
@@ -212,8 +213,10 @@ class OpenRouterClient:
             started = time.monotonic()
             delay = min(2.0**attempt, 30.0)
             try:
-                response = await self.http.post(url, json=body, headers=self._headers)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                # httpx's timeout bounds each read, and a server that keeps sending keep-alive blank lines
+                # (DeepSeek does while a request waits in its queue) would never trip it; this bounds the attempt.
+                response = await asyncio.wait_for(self.http.post(url, json=body, headers=self._headers), self.timeout)
+            except (httpx.TimeoutException, httpx.TransportError, TimeoutError) as exc:
                 error = LLMError(f"連線 {self.name} 失敗：{type(exc).__name__}", retryable=True)
             else:
                 error = self._check(response)
@@ -237,7 +240,9 @@ class OpenRouterClient:
             data = response.json()
         except ValueError:
             return LLMError(f"{self.name} 回傳的不是 JSON。", retryable=True)
-        error = data.get("error") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return LLMError(f"{self.name} 回傳的 JSON 不是物件。", retryable=True)
+        error = data.get("error")
         if error is None:
             choices = data.get("choices") or []
             error = choices[0].get("error") if choices and isinstance(choices[0], dict) else None
