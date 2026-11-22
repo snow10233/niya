@@ -15,7 +15,7 @@
   - **對話分段**：閒置 30 分鐘或 session 結束就切一段；鬧鐘和背景程序觸發的回合各自一段。之後睡眠時會以段為單位整理。
   - **全文搜尋**：`deep_recall` 用關鍵字搜尋以前的對話，中文和英文都能找；`recall_related(msg#id)` 看前後文。
   - **持久化 inbox**：主人的訊息、背景程序結束的通知都先進資料庫，重啟不會遺失，一次處理一回合。
-  - **context 用量門檻**：回合中超過 90% 就停下工具、交代進度；回合結束時超過 75% 就開新 session。睡眠做好以後，這裡會改成提早睡。
+  - **context 用量門檻**：回合中超過 90% 就停下工具、交代進度；回合結束時超過 75% 就壓縮 context（見 M6a 的「context 滿了」）。
 - **M4 鬧鐘**：
   - niya 用 `alarm` 工具自己設提醒，支援一次性和 cron 重複。時間到了會叫醒 niya 跑一回合，去提醒你或去做某件事。
   - niya 沒在運作時錯過的鬧鐘：提醒類 6 小時內、任務類 24 小時內補響，超過就讓 niya 告訴你錯過了。
@@ -43,7 +43,11 @@
   - **修剪**：R 低於 0.30 的記憶封存，不會再自動浮現。
   - **想起來**：封存的記憶被用力回想找到並用上、主人又提起，或睡覺時要寫下的新記憶其實就是它，都會讓它回來，不另記一條新的。這算重新學會（權重 1.0），而且因為已經快忘了，S 會一次增加很多。
   - **起床**：整理完才清空 context、開新 session、重建記憶區塊，第一則訊息前會附一行「午睡醒來（整理了…）」。發現沒設鬧鐘的計畫，會提醒 niya 判斷要不要補。
-  - **context 滿了**：說「有點累了，先睡一下」就提早去睡。午睡前提早睡算這天的午睡，午睡後提早睡算這晚的夜間睡眠，被頂替的時段不再睡。醒來時會帶上「睡前正在做」的進度。
+  - **context 滿了**：不提早睡，改成壓縮 context，工作不會做到一半斷掉。
+    - **回合結束時超過 75%**：niya 在同一個 context 裡自己寫一份交接摘要：正在做什麼、做到哪、決定了什麼、還沒做的事，以及之後用得到的路徑、指令和數字。之後送給模型的只有這份摘要和最近的對話原文（主人和 niya 說的話，最多 context 上限的 25%）。
+    - **做到一半超過 90%**：先停下工具、交代進度，壓縮完自動接著做，不用主人開口。同一個請求最多自動接續 3 次，之後停下來等主人。
+    - **原始紀錄不動**：只改送給模型看的內容。每則訊息照樣留在資料庫，睡覺時照常整理；壓縮掉的部分用 `deep_recall` 找得到，那時浮現過的記憶也能再自動浮現。
+    - **壓縮失敗才提早睡**：說「有點累了，先睡一下」。午睡前提早睡算這天的午睡，午睡後提早睡算這晚的夜間睡眠，被頂替的時段不再睡。醒來時會帶上「睡前正在做」的進度。
   - **睡覺中**：訊息先排隊；`/wake` 或提醒類鬧鐘會叫醒 niya，但不清空 context，閒下來後（被 `/wake` 叫醒要 30 分鐘，被鬧鐘叫醒要 5 分鐘）再續睡。
   - **REPL 指令**：`/status`、`/sleep [nap|night]`、`/wake`、`/dream`。
   - **快轉時鐘**：`niya repl --fake-clock "2026-10-29 11:30"` 搭配 `/advance 90m`，不用真的等到 13:00 也能測試睡眠。
@@ -131,12 +135,13 @@ uv run --env-file .env niya model        # 查看、切換模型
   - Claude：`low`、`medium`、`high`、`xhigh`、`max`。Claude 不能完全不思考，設 `none`／`minimal` 會當成 `low`。
   - OpenRouter：另外還有 `none`（不思考）和 `minimal`，送出時是 `reasoning.effort`。
   - Claude 模式改強度時會重新連上 Claude Code，對話照樣接續。
+- **context 上限**：預設就是模型本身的上限。Claude 用 Claude Code 回報的窗口（Opus 是 100 萬），OpenRouter 查模型清單。想省額度可以在 `[agent] max_context_tokens` 設小一點，兩者取較小的。
 - **為什麼不像 Hermes 那樣直接拿 token 呼叫 API**：Anthropic 規定訂閱登入只能用在官方的 Claude Code 和 Anthropic 自己的 App，第三方程式不能取出或代管登入憑證，從 2026 年 1 月起也會主動封鎖。所以 niya 改成在背後執行官方 Claude Code。
 - **額度**：訂閱有 5 小時和每週的用量上限，用完時 niya 會告訴你幾點重置。設了 `ANTHROPIC_API_KEY` 就改走 API 計費。
 - **Claude 模式跟 OpenRouter 模式的差別**：
   - 工具迴圈和 API context 由 Claude Code 管。niya 的工具以 MCP 的形式提供，模型看到的名稱是 `mcp__niya__terminal` 這類。
   - 所有工具一樣經過黑名單、外傳檢查和密鑰遮蔽。每則訊息也一樣存進 niya 的資料庫。
-  - Claude Code 的自動壓縮已經關掉，context 滿了照計畫提早睡覺。
+  - Claude Code 的自動壓縮已經關掉，context 滿了由 niya 自己寫交接摘要，再另開一個 Claude Code session 從摘要接著聊。
 - 記憶用的 embedding（M5）還是走 OpenRouter。
 - **睡眠用的模型**：`[sleep] model` 和 `[sleep] effort` 可以另外指定。
   - 除了 claude、openrouter，也可以用 DeepSeek 官方 API：`model = "deepseek:deepseek-flash"`，金鑰放 `DEEPSEEK_API_KEY`。

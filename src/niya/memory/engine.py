@@ -18,6 +18,7 @@ import numpy as np
 from niya.core.clock import Clock
 from niya.core.db import Database
 from niya.memory.curve import DAY, DEFAULT, CurveParams, cue_threshold, initial_stability, r_at, recall_score, reinforce
+from niya.memory.episodic import latest_compaction
 from niya.memory.search import match_expression, query_terms, search_messages
 from niya.memory.timefmt import exact_label, time_label
 from niya.memory.timeparse import parse_time_range
@@ -353,7 +354,12 @@ class MemoryEngine:
         return {r["id"] for r in rows}
 
     def _shown_in_session(self, session_id: str) -> set[int]:
-        rows = self.db.query("SELECT DISTINCT memory_id FROM retrieval_events WHERE session_id = ? AND channel = 'auto'", (session_id,))
+        """Memories that surfaced in what is still in the context; a compaction let the earlier ones go."""
+        compaction = latest_compaction(self.db, session_id)
+        rows = self.db.query(
+            "SELECT DISTINCT memory_id FROM retrieval_events WHERE session_id = ? AND channel = 'auto' AND ts > ?",
+            (session_id, compaction["ts"] if compaction else float("-inf")),
+        )
         return {r["memory_id"] for r in rows}
 
     # --- automatic recall --------------------------------------------------------------------------
@@ -465,14 +471,17 @@ class MemoryEngine:
         scored.sort(key=lambda item: -item[0])
         memories = [m for _, m in scored[:DEEP_MEMORIES]]
         self.log_retrievals(((m, self.r(m, now)) for m in memories), channel="deep", session_id=session_id, turn_id=turn_id)
-        hits = search_messages(self.db, query, since=since, until=until, exclude_session=session_id, limit=DEEP_MESSAGES)
+        compaction = latest_compaction(self.db, session_id)
+        hits = search_messages(
+            self.db, query, since=since, until=until, exclude_session=session_id, in_context_after=compaction["upto_message_id"] if compaction else 0, limit=DEEP_MESSAGES
+        )
         if not memories and not hits:
             return f"怎麼想都想不起「{query}」。可以換個關鍵字，或放寬時間範圍。"
         lines: list[str] = []
         if memories:
             lines += ["記憶：", *(self._exact_line(m, now) for m in memories)]
         if hits:
-            lines += ["以前的對話（都是先前的 session，不在目前的 context 裡）："]
+            lines += ["以前的對話（都不在目前的 context 裡）："]
             lines += [f"- msg#{h.id} [{exact_label(h.ts, None, self.tz)}] {'niya' if h.role == 'assistant' else _speaker(h.speaker)}: {h.snippet}" for h in hits]
         return "\n".join(lines)
 

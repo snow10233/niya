@@ -79,11 +79,13 @@ def search_messages(
     since: float | None = None,
     until: float | None = None,
     exclude_session: str | None = None,
+    in_context_after: int = 0,
     limit: int = 10,
 ) -> list[MessageHit]:
+    """`exclude_session` leaves out what is still in that session's context: its messages after `in_context_after`."""
     terms, fallback = query_terms(query)
-    where = ["m.ts >= ?", "m.ts < ?", "m.session_id <> ?"]
-    params: list[object] = [since if since is not None else float("-inf"), until if until is not None else float("inf"), exclude_session or ""]
+    where = ["m.ts >= ?", "m.ts < ?", "NOT (m.session_id = ? AND m.id > ?)"]
+    params: list[object] = [since if since is not None else float("-inf"), until if until is not None else float("inf"), exclude_session or "", in_context_after]
     if expression := match_expression(terms):
         rows = db.query(
             "SELECT m.id, m.session_id, m.ts, m.speaker, m.role, snippet(messages_tri, 0, '«', '»', '…', 24) AS snip"

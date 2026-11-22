@@ -4,6 +4,8 @@ A chat segment runs until the conversation goes quiet for IDLE_GAP_S or the sess
 an alarm or a background process get a segment of their own, so they never get blended into a chat.
 """
 
+import sqlite3
+
 from niya.core.db import Database
 
 IDLE_GAP_S = 30 * 60
@@ -13,6 +15,13 @@ OWN_SEGMENT_SOURCES = frozenset({"alarm", "process"})
 def _last_activity(db: Database, segment_id: int, started_at: float) -> float:
     row = db.one("SELECT MAX(COALESCE(ended_at, started_at)) AS last FROM turns WHERE segment_id = ?", (segment_id,))
     return row["last"] if row and row["last"] is not None else started_at
+
+
+def latest_compaction(db: Database, session_id: str | None) -> sqlite3.Row | None:
+    """The session's last context compaction: messages up to upto_message_id are no longer in the context."""
+    if session_id is None:
+        return None
+    return db.one("SELECT * FROM compactions WHERE session_id = ? ORDER BY id DESC LIMIT 1", (session_id,))
 
 
 def close_segment(db: Database, segment_id: int, *, reason: str) -> None:

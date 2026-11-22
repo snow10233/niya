@@ -318,6 +318,19 @@ MIGRATIONS: list[str] = [
     ALTER TABLE sessions ADD COLUMN imported_from TEXT;
     CREATE INDEX idx_turns_started ON turns(started_at);
     """,
+    """
+    -- Context compaction: past upto_message_id the model sees the handoff instead of the messages themselves.
+    -- The messages stay; sleep still consolidates every one of them.
+    CREATE TABLE compactions(
+      id INTEGER PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id),
+      ts REAL NOT NULL,
+      upto_message_id INTEGER NOT NULL,
+      handoff TEXT NOT NULL,
+      prompt_tokens INTEGER
+    );
+    CREATE INDEX idx_compactions_session ON compactions(session_id, id);
+    """,
 ]
 
 

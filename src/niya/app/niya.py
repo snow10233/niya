@@ -75,7 +75,7 @@ class Niya:
             notes.append(f"模型換成 {choice.provider}，已開新 session。")
         self.control = ModelControl(settings=s, db=self.db, clock=self.clock, tools=self.tools, prompt=self.prompt, agent=agent, confirm=ui.confirm)
         self.brain = Brain(
-            inbox=self.inbox, control=self.control, egress=self.tools.egress, reply=ui.say, report=ui.notice, on_context_full=self._context_full, on_busy=ui.on_busy
+            inbox=self.inbox, control=self.control, egress=self.tools.egress, reply=ui.say, report=ui.notice, on_compact_failed=self._compact_failed, on_busy=ui.on_busy
         )
         self.sleep = SleepOrchestrator(
             db=self.db,
@@ -126,7 +126,7 @@ class Niya:
             return {key: self._redacted(item) for key, item in value.items()}
         return value
 
-    async def _context_full(self, used: int, progress: str) -> None:
+    async def _compact_failed(self, used: int, progress: str) -> None:
         await self.ui.say(f"有點累了，先睡一下，整理完就醒。（context 用了 {used}%）")
         await self.sleep.request_sleep("overflow", progress=progress)
 
