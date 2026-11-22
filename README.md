@@ -143,14 +143,15 @@ uv run --env-file .env niya model        # 查看、切換模型
 ## 從 Hermes 搬家
 
 把 Hermes 用過的 agent 帶過來：對話照時間重新「活」一遍，整理成 niya 的記憶；筆記拆開來分層；技能換成 niya 的工具再搬；人格從 SOUL.md 來。
-資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db`、`memories/` 和 `skills/`。niya 只讀，不會改它。
+資料來源是 Hermes 資料夾（`~/.hermes`）的副本，裡面要有 `state.db`、`memories/` 和 `skills/`；排程另外用 `cron/jobs.json`。niya 只讀，不會改它。
 
 ```sh
 uv run --env-file .env niya hermes import ~/hermes-copy      # 1. 匯入對話（只寫原始紀錄）
 uv run --env-file .env niya hermes replay                    # 2. 回放：每回合自動回想，每天 03:00、13:00 睡覺整理
 uv run --env-file .env niya hermes notes ~/hermes-copy       # 3. 拆筆記，產生審核清單和人格草稿
 uv run --env-file .env niya hermes skills ~/hermes-copy      # 4. 讀技能：事實接在審核清單後面，技能列成搬家清單
-uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 5. 看過、改過清單之後一起匯入
+uv run --env-file .env niya hermes cron ~/hermes-copy/cron/jobs.json   # 5. 排程列成搬家清單
+uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 6. 看過、改過清單之後一起匯入
 ```
 
 - **匯入**：
@@ -191,6 +192,14 @@ uv run --env-file .env niya hermes apply $NIYA_HOME/hermes-notes.md   # 5. 看�
   - 搬家清單是 `hermes-skills.md`，改標籤決定搬不搬；要調整內容就直接改 `hermes-skills/` 裡的檔案。Hermes 內建、沒改過的技能只列出來，預設不搬。
   - 模型回的不是 JSON 會再試兩次。結果存在 `hermes-skills.json`，`--only 名稱,名稱` 可以只重讀幾個，其他沿用上次的結果。
   - apply 時把 `[move]` 的技能搬進 `$NIYA_HOME/skills/`，每個檔案都用最嚴格的規則掃描過；niya 已經有的同名技能不動，所以可以重跑。
+- **排程**：
+  - Hermes 的排程分成三種去處，列在 `hermes-cron.md` 給主人勾：
+    - `[timer]`：只跑腳本的（Hermes 的 no_agent 排程）變成 systemd timer，用 `niya run-job` 照原本的規則跑，腳本不用改。
+    - `[alarm]`：要 agent 做的變成 niya 的鬧鐘，原本的 prompt 寫在備註裡；每 N 天這種間隔會換成 cron 規則。
+    - `[drop]`：Hermes 上已經停用的、用到不搬的技能的（例如做夢），預設不搬。
+  - 投遞目標照原本的：`origin` 是建立排程的那個 Discord 討論串，`local` 不發。
+  - apply 時鬧鐘直接寫進 niya.db；timer 的設定檔和 `install.sh` 寫到 `$NIYA_HOME/hermes-cron/`。切換那天在 VPS 上先停掉 Hermes，再執行 `install.sh`（Hermes 還在跑的話它會拒絕，免得同一個排程跑兩次）。
+  - 換成比較新的 `jobs.json` 再跑一次 `niya hermes cron`，已經勾好的標籤會保留。
 
 ## 安全機制
 
@@ -279,6 +288,19 @@ systemctl restart niya
 
 - 新程式要重啟才會生效。重啟前 niya 如果正在睡覺整理，下次醒著閒下來時會續睡，已整理完的片段不會重做。
 - service 檔用複製的，不用 `systemctl link` 連到 repo：niya 能改 `/opt/niya`，用複製的話，repo 裡的 service 檔被改動，也不會在你不知情時改掉 systemd 的設定（例如記憶體上限）。
+
+### 5. 定時跑的腳本
+
+不需要 niya 判斷、只要定時跑的腳本（監控、資料更新、產線），放在 systemd timer 裡用 `niya run-job` 跑：
+
+```sh
+niya run-job --name "snowbox 健康監控" --deliver discord:<頻道 ID> -- /usr/bin/python3 /opt/watch/check.py
+```
+
+- 腳本有輸出，才原樣發到 `--deliver` 的頻道；沒有輸出，或最後一行是 `{"wakeAgent": false}`，就什麼都不發。發出去之前會先遮蔽密鑰。
+- 腳本失敗（exit 不是 0）或超過 `--timeout` 秒（預設 3600），會把 exit code 和最後的 stderr、stdout 發到 `--on-failure`（預設跟 `--deliver` 同一個頻道）。
+- 腳本拿到的是 timer 的環境變數，但不包含 niya 的密鑰；預設在腳本所在的資料夾執行，可以用 `--cwd` 改。
+- 這和 Hermes 的 no_agent 排程是同一套規則，所以從 Hermes 搬來的腳本不用改。要 niya 判斷或回報的事，用鬧鐘（`alarm` 工具）。
 
 ## 送給模型的格式
 
