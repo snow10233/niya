@@ -23,7 +23,8 @@ class CurveParams:
     labile_factor: float = 0.05  # remembered during the day, not yet consolidated by sleep
     insight_factor: float = 0.5
     level_mult: dict[str, float] = field(default_factory=lambda: {"day": 1.5, "week": 3.0, "month": 6.0})
-    weights: dict[str, float] = field(default_factory=lambda: {"use": 1.0, "reencounter": 0.6, "exposure": 0.0, "relearn": 1.0, "parent": 0.3})
+    # exposure: surfaced but not used. Small, and the spacing term keeps it near zero while a memory is fresh.
+    weights: dict[str, float] = field(default_factory=lambda: {"use": 1.0, "reencounter": 0.6, "exposure": 0.2, "relearn": 1.0, "parent": 0.3})
     # Recall thresholds, calibrated for perplexity/pplx-embed-v1-4b at 1024 dimensions
     # (unrelated pairs: median cos 0.12, p95 0.27; matches: median 0.45).
     cue_base: float = 0.30

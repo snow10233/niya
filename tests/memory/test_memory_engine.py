@@ -1,3 +1,4 @@
+import re
 import unittest
 
 from helpers import TZ, FakeLLM, HashEmbedder, reply, ts
@@ -66,6 +67,21 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.db.execute("UPDATE memories SET state = 'archived' WHERE id = ?", (memory.id,))
         archived = await self.engine.recall("gunicorn 沒有啟動", session_id="x", turn_id="t3")
         self.assertIn("還有 1 條可能相關、但想不太起來的記憶", archived.block)
+
+    async def test_what_did_not_fit_waits_for_recall_more(self):
+        for i in range(9):
+            memory, _ = await self.engine.remember(f"京都旅行的第 {i} 個細節：住在鴨川旁邊", session_id="old")
+            self.make_active(memory.id, 30)
+        self.clock.advance(DAY)
+        result = await self.engine.recall("京都旅行住在鴨川旁邊的細節", session_id="now", turn_id="t1")
+        self.assertEqual((len(result.ids), result.held), (6, 3))
+        self.assertIn("還有 3 條也相關、但排在後面的記憶沒有列出；要的不在上面，先用 recall_more", result.block)
+        self.assertTrue(self.engine.recall_more(session_id="now", turn_id="t2").startswith("這一回合沒有"))  # only this turn's
+        more = self.engine.recall_more(session_id="now", turn_id="t1")
+        self.assertEqual(more.count("京都旅行的第"), 3)
+        self.assertFalse(set(result.ids) & {int(i) for i in re.findall(r"- m(\d+) ", more)})
+        self.assertEqual(self.db.one("SELECT COUNT(*) AS n FROM retrieval_events WHERE channel = 'held'")["n"], 3)  # judged at sleep like the rest
+        self.assertTrue(self.engine.recall_more(session_id="now", turn_id="t1").startswith("這一回合沒有"))
 
     async def test_time_cue_pulls_in_what_happened_then(self):
         memory, _ = await self.engine.remember("幫主人部署了 nginx", kind="event", session_id="old")

@@ -121,7 +121,38 @@ class NremTests(unittest.IsolatedAsyncioTestCase):
         result = await Nrem(self.db, self.engine, ScriptedCompleter(plan)).consolidate(self.segment, run_id=1)
         self.assertEqual((result.reencounters, result.memories), (1, 0))
         self.assertEqual(len(result.dropped), 1)
-        self.assertEqual(self.db.one("SELECT kind FROM memory_reviews")["kind"], "reencounter")
+        # Met again in the conversation, and surfaced without being used.
+        self.assertEqual(sorted(r["kind"] for r in self.db.query("SELECT kind FROM memory_reviews")), ["exposure", "reencounter"])
+
+    async def forgotten(self, content):
+        memory, _ = await self.engine.remember(content, kind="fact", trust="owner", session_id="older")
+        self.db.execute("UPDATE memories SET state = 'archived', stability = 2, last_review_at = ? WHERE id = ?", (ts("2026-08-01 10:00"), memory.id))
+        self.engine.index.remove(memory.id)
+        return self.engine.get(memory.id)
+
+    async def test_brought_up_again_strengthens_and_brings_back_the_forgotten(self):
+        forgotten = await self.forgotten("主人換到 Hetzner 了，咖啡也改成不加糖")
+        plan = self.plan(used_memories=[], mentioned_memories=[self.old.id, forgotten.id, 99999])
+        plan["events"][1]["memories"] = []
+        completer = ScriptedCompleter(plan)
+        result = await Nrem(self.db, self.engine, completer).consolidate(self.segment, run_id=1)
+        self.assertIn(f"## 很久沒想起、已經淡忘的舊記憶（主人又講到的放進 mentioned_memories）\n- {forgotten.id} 主人換到 Hetzner 了", completer.prompts[0])
+        self.assertEqual((result.mentioned, result.revived), (2, 1))
+        reviews = {(r["memory_id"], r["kind"]): r for r in self.db.query("SELECT * FROM memory_reviews")}
+        self.assertEqual(set(reviews), {(self.old.id, "exposure"), (self.old.id, "reencounter"), (forgotten.id, "reencounter")})
+        exposure = reviews[(self.old.id, "exposure")]
+        self.assertGreater(exposure["s_after"], exposure["s_before"])
+        back = self.engine.get(forgotten.id)
+        self.assertEqual(back.state, "active")
+        self.assertGreater(back.stability, 2 * 2)  # nearly forgotten, so relearning more than doubles it
+        self.assertIn(forgotten.id, dict(self.engine.index.search((await self.engine.embed([back.content]))[0], 3)))
+
+    async def test_a_forgotten_fact_written_again_comes_back_instead(self):
+        forgotten = await self.forgotten("nginx 設定檔在 /etc/nginx/sites-available/niya")
+        result = await Nrem(self.db, self.engine, ScriptedCompleter(self.plan())).consolidate(self.segment, run_id=1)
+        self.assertEqual(result.revived, 1)
+        self.assertEqual(self.db.one("SELECT COUNT(*) AS n FROM memories WHERE content = ?", (forgotten.content,))["n"], 1)
+        self.assertEqual(self.engine.get(forgotten.id).state, "active")
 
     async def test_failure_mid_write_rolls_the_whole_segment_back(self):
         create = self.engine.create

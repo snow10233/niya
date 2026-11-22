@@ -192,7 +192,8 @@ class Replay:
         stats.archived += run.archived
         line = (
             f"{format_ts(at, self.tz)} {KIND_LABELS[kind]}：{run.segments} 段 → {run.events} 個事件、{run.memories} 條記憶，"
-            f"{run.used} 條用上變牢，封存 {run.archived} 條" + (f"，{run.failed} 段失敗" if run.failed else "")
+            f"{run.used} 條用上變牢" + (f"、{run.mentioned} 條又被提起" if run.mentioned else "") + (f"（{run.revived} 條想起來了）" if run.revived else "")
+            + f"，封存 {run.archived} 條" + (f"，{run.failed} 段失敗" if run.failed else "")
         )
         stats.lines.append(line)
         self.report(line)
