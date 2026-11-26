@@ -93,7 +93,7 @@ def test_keeps_looping_until_model_stops_asking(monkeypatch):
 
     queries = []
 
-    def fake_run_tool(name, tool_input):
+    def fake_run_tool(_name, tool_input):
         queries.append(tool_input["query"])
         return "結果"
 
