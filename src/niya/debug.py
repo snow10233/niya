@@ -4,10 +4,16 @@ import json
 # 把資料裡「其實是 JSON 的字串」拆回字典或清單，印出來才會一起排版
 def unpack(data):
     if isinstance(data, dict):
-        return {key: unpack(value) for key, value in data.items()}
+        unpacked = {}
+        for key, value in data.items():
+            unpacked[key] = unpack(value)
+        return unpacked
 
     if isinstance(data, list):
-        return [unpack(item) for item in data]
+        unpacked = []
+        for item in data:
+            unpacked.append(unpack(item))
+        return unpacked
 
     if isinstance(data, str) and data[:1] in ("{", "["):
         try:
