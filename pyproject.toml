@@ -5,3 +5,10 @@ requires-python = ">=3.12"
 dependencies = [
     "python-dotenv>=1.2.4",
 ]
+
+[project.scripts]
+niya = "niya.main:chat_loop"
+
+[build-system]
+requires = ["uv_build>=0.12.12,<0.13.0"]
+build-backend = "uv_build"

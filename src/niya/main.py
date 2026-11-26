@@ -4,11 +4,10 @@ import urllib.request
 
 from dotenv import load_dotenv
 
-from debug import show
-from tools import TOOLS, run_tool
+from niya.debug import show
+from niya.tools import TOOLS, run_tool
 
 load_dotenv()
-API_KEY = os.environ["ANTHROPIC_API_KEY"]
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
 messages = []
@@ -25,7 +24,7 @@ def call_model():
         URL,
         data=json.dumps(body).encode(),
         headers={
-            "x-api-key": API_KEY,
+            "x-api-key": os.environ["ANTHROPIC_API_KEY"],
             "anthropic-version": "2026-10-21",
             "Content-Type": "application/json",
         },
