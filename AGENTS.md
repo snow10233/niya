@@ -36,6 +36,14 @@ niya 是主人自己寫的長期運行 agent，目標是取代跑在 Hermes Agen
 
 `uv run pytest`。測試放在 `tests/`，不連網、不花錢：要用到模型或搜尋的地方都換成假的。每次開 PR，GitHub 會自動跑一次（`.github/workflows/ci.yml`）。
 
+## 排版和程式檢查
+
+用 ruff，不靠人記規則：
+
+- `uv run ruff format` 排版，`uv run ruff check` 檢查（例如引入了卻沒用到）。
+- commit 之前會自動檢查（`.pre-commit-config.yaml`），不過就擋下來，只擋不改。每個 clone 要先跑一次 `uv run pre-commit install` 才會生效。
+- 開 PR 時 CI 也會檢查，這一層繞不過去。
+
 ## 其他規矩
 
 - 每完成一段就 commit（訊息用繁體中文），不 push。

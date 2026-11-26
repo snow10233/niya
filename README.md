@@ -26,3 +26,18 @@ niya 是一個長期運行的 agent，想做到有時間感、會遺忘、會睡
    第一次跑的時候，uv 會自動把需要的套件裝好。
 
 3. 打 `/q` 離開。
+
+## 要改程式的話
+
+clone 下來之後，先跑一次：
+
+```
+uv run pre-commit install
+```
+
+之後每次 `git commit`，都會先自動檢查排版和程式（用 [ruff](https://docs.astral.sh/ruff/)），不過就擋下來。被擋下來時：
+
+- 排版不對：跑 `uv run ruff format`，它會幫你排好，再 `git add`、重新 commit。
+- 程式檢查不過：照訊息改好，再 `git add`、重新 commit。
+
+測試用 `uv run pytest`。同樣的檢查和測試，開 PR 時 GitHub 也會再跑一次。

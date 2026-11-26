@@ -1,0 +1,26 @@
+# 每次 git commit 之前要自動跑的檢查。
+# 第一次使用要先在這個 repo 跑一次：uv run pre-commit install
+#
+# 這些檢查只會擋下 commit，不會幫你改檔案。被擋下來時：
+#   排版不對 → 跑 uv run ruff format，再 git add、重新 commit
+#   程式檢查不過 → 照訊息改好，再 git add、重新 commit
+
+repos:
+  # local 的意思是：下面的檢查直接寫在這個檔案裡，不是從別的 repo 抓來的
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: 排版檢查（ruff format）
+        # 要執行的指令。pre-commit 會把這次要 commit 的檔案名稱接在後面
+        # --check 是只檢查、不修改
+        entry: uv run ruff format --check
+        # unsupported 的意思是：pre-commit 不另外準備環境，直接用這台電腦上的指令
+        language: unsupported
+        # 只有 Python 檔案才需要跑這個檢查
+        types: [python]
+
+      - id: ruff-check
+        name: 程式檢查（ruff check）
+        entry: uv run ruff check
+        language: unsupported
+        types: [python]
