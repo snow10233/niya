@@ -10,7 +10,7 @@ dependencies = [
     "discord-py>=2.5,<3",
     "httpx>=0.28,<1",
     "numpy>=2,<3",
-    "pillow>=11,<13",
+    "pillow>=11,<14",
     "pyyaml>=6,<7",
 ]
 
