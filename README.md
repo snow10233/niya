@@ -10,15 +10,17 @@ niya 是一個長期運行的 agent，想做到有時間感、會遺忘、會睡
 
 在終端機跟 Claude 聊天，它會記得這次對話裡前面講過的話。程式關掉後就忘了。
 
+它可以自己決定要不要上網搜尋（用 Brave Search），查完再回答。
+
 ## 怎麼跑
 
 需要先裝好 [uv](https://docs.astral.sh/uv/)。
 
-1. 把 `.env.example` 複製成 `.env`，填上 Anthropic 的 API key。
+1. 把 `.env.example` 複製成 `.env`，填上 Anthropic 和 Brave Search 的 API key。
 2. 執行：
 
    ```
-   uv run niya.py
+   uv run src/niya/main.py
    ```
 
    第一次跑的時候，uv 會自動把需要的套件裝好。
