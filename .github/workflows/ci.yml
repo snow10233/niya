@@ -25,5 +25,13 @@ jobs:
       - name: 安裝套件
         run: uv sync --locked
 
+      # 排版不對就失敗（--check 是只檢查、不修改）
+      - name: 排版檢查
+        run: uv run --locked ruff format --check
+
+      # 程式檢查，例如引入了卻沒用到
+      - name: 程式檢查
+        run: uv run --locked ruff check
+
       - name: 跑測試
         run: uv run --locked pytest
