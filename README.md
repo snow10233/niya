@@ -20,7 +20,7 @@ niya 是一個長期運行的 agent，想做到有時間感、會遺忘、會睡
 2. 執行：
 
    ```
-   uv run src/niya/main.py
+   uv run niya
    ```
 
    第一次跑的時候，uv 會自動把需要的套件裝好。
