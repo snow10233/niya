@@ -88,7 +88,11 @@ def test_tool_use_then_answer(monkeypatch):
 def test_keeps_looping_until_model_stops_asking(monkeypatch):
     fake_model(
         monkeypatch,
-        [tool_reply("toolu_1", "第一次"), tool_reply("toolu_2", "第二次"), text_reply("查完了")],
+        [
+            tool_reply("toolu_1", "第一次"),
+            tool_reply("toolu_2", "第二次"),
+            text_reply("查完了"),
+        ],
     )
 
     queries = []

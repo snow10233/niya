@@ -4,7 +4,9 @@ import urllib.request
 
 from dotenv import load_dotenv
 
-from niya.debug import show
+# show 平常沒用到，是留給除錯用的（把下面 call_model 裡的 show(body) 取消註解）。
+# 行尾的 noqa 是告訴 ruff：這行「引入了卻沒用到」（代號 F401）是故意的，不要報錯
+from niya.debug import show  # noqa: F401
 from niya.tools import TOOLS, run_tool
 
 load_dotenv()
@@ -64,7 +66,7 @@ def ask(question):
                         "content": run_tool(block["name"], block["input"]),
                     }
                 )
-        
+
         messages.append({"role": "user", "content": tool_results})
 
     for block in reply["content"]:
@@ -84,5 +86,5 @@ def chat_loop():
         print("----------------------------------------")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     chat_loop()
