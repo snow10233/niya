@@ -27,7 +27,7 @@ niya 是主人自己寫的長期運行 agent，目標是取代跑在 Hermes Agen
 
 ## 怎麼跑
 
-`uv run --env-file .env niya.py`。`--env-file .env` 會把 `.env` 裡的密鑰交給程式。
+`uv run niya.py`。程式開頭的 `load_dotenv()` 會把 `.env` 裡的密鑰讀進環境變數。
 
 ## 其他規矩
 

@@ -2,6 +2,9 @@ import json
 import os
 import urllib.request
 
+from dotenv import load_dotenv
+
+load_dotenv()
 API_KEY = os.environ["ANTHROPIC_API_KEY"]
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
