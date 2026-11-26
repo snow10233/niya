@@ -1,0 +1,29 @@
+name: CI
+
+# 什麼時候跑：有人開 PR 或更新 PR 的時候，以及東西合併進 main 的時候
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 這個流程只需要讀程式碼，不給它其他權限
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # 把這個 repo 的程式碼抓下來
+      - uses: actions/checkout@v7
+
+      # 安裝 uv
+      - uses: astral-sh/setup-uv@v10.4.0
+
+      # 照 uv.lock 安裝套件；uv.lock 跟 pyproject.toml 對不上就直接失敗
+      - name: 安裝套件
+        run: uv sync --locked
+
+      - name: 跑測試
+        run: uv run --locked pytest
