@@ -6,6 +6,7 @@ import urllib.request
 
 from dotenv import load_dotenv
 
+from niya.conversation import Conversation
 from niya.debug import DailyFileHandler, pretty
 from niya.tools import TOOLS, run_tool
 
@@ -22,15 +23,14 @@ SEPARATOR = "----------------------------------------"
 
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
-messages = []
 
 
-def call_model():
+def call_model(conversation):
     body = {
         "model": MODEL,
         "max_tokens": 10000,
         "tools": TOOLS,
-        "messages": messages,
+        "messages": conversation.messages,
     }
     request = urllib.request.Request(
         URL,
@@ -53,13 +53,13 @@ def call_model():
     return reply
 
 
-def ask(question):
-    messages.append({"role": "user", "content": question})
+def ask(conversation, question):
+    conversation.add_user(question)
 
     while True:
-        reply = call_model()
+        reply = call_model(conversation)
 
-        messages.append({"role": "assistant", "content": reply["content"]})
+        conversation.add_assistant(reply["content"])
 
         if reply["stop_reason"] != "tool_use":
             break
@@ -82,7 +82,7 @@ def ask(question):
                     }
                 )
 
-        messages.append({"role": "user", "content": tool_results})
+        conversation.add_tool_results(tool_results)
 
     for block in reply["content"]:
         if block["type"] == "text":
@@ -90,6 +90,9 @@ def ask(question):
 
 
 def chat_loop():
+    # 這次執行的對話紀錄。程式關掉就沒了
+    conversation = Conversation()
+
     while True:
         question = input("你：")
 
@@ -97,7 +100,7 @@ def chat_loop():
         if question == "/q":
             return
 
-        print("niya：" + ask(question))
+        print("niya：" + ask(conversation, question))
         print(SEPARATOR)
         logger.debug(SEPARATOR)
 
