@@ -43,7 +43,7 @@ uv run pre-commit install
 想看每次送給模型的完整內容，用除錯模式跑：
 
 ```
-NIYA_DEBUG=1 uv run niya
+uv run niya --debug
 ```
 
 測試用 `uv run pytest`。同樣的檢查和測試，開 PR 時 GitHub 也會再跑一次。

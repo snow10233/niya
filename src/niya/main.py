@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os
@@ -35,7 +36,7 @@ def call_model():
         },
     )
 
-    # 這行一直留著：平常不會印，NIYA_DEBUG=1 時才會印出來
+    # 這行一直留著：平常不會印，啟動時加 --debug 才會印出來
     logger.debug("送給模型的內容：\n" + pretty(body))
 
     with urllib.request.urlopen(request) as response:
@@ -79,10 +80,6 @@ def ask(question):
 
 
 def chat_loop():
-    # 除錯開關：環境變數 NIYA_DEBUG 是 1，才把 DEBUG 等級的 log 印出來
-    if os.environ.get("NIYA_DEBUG") == "1":
-        logging.basicConfig(level=logging.DEBUG)
-
     while True:
         question = input("你：")
 
@@ -94,5 +91,23 @@ def chat_loop():
         print("----------------------------------------")
 
 
-if __name__ == "__main__":
+# 程式的入口：先讀命令列選項、做好啟動設定，再開始聊天
+def main():
+    parser = argparse.ArgumentParser()
+    # action="store_true"：這個選項後面不用接值，有出現就是 True，沒出現就是 False
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="印出每次送給模型的完整內容",
+    )
+    args = parser.parse_args()
+
+    # 除錯開關：有加 --debug，才把 DEBUG 等級的 log 印出來
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+
     chat_loop()
+
+
+if __name__ == "__main__":
+    main()
