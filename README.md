@@ -46,6 +46,6 @@ uv run pre-commit install
 uv run niya --debug
 ```
 
-內容會寫進 `logs/niya.log`。想邊聊邊看，另開一個終端機跑 `tail -f logs/niya.log`。
+內容會寫進 `logs/` 資料夾，一天一個檔，檔名是當天的日期，例如 `logs/2026-11-27.log`。想邊聊邊看，另開一個終端機跑 `tail -f logs/2026-11-27.log`（換成當天的日期）。
 
 測試用 `uv run pytest`。同樣的檢查和測試，開 PR 時 GitHub 也會再跑一次。

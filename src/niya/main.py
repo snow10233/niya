@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import urllib.request
+from datetime import date
 
 from dotenv import load_dotenv
 
@@ -14,9 +15,11 @@ load_dotenv()
 # 這個檔案專用的記錄器。__name__ 是這個檔案的名字（niya.main），會出現在每一行 log 的開頭
 logger = logging.getLogger(__name__)
 
-# 除錯紀錄放哪。路徑是從「執行指令時所在的資料夾」算起
+# 除錯紀錄放哪個資料夾。路徑是從「執行指令時所在的資料夾」算起
 LOG_DIR = "logs"
-LOG_FILE = LOG_DIR + "/niya.log"
+
+# 一輪問答結束後畫的橫線，聊天畫面和 log 檔都用同一條
+SEPARATOR = "----------------------------------------"
 
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
@@ -96,7 +99,8 @@ def chat_loop():
             return
 
         print("niya：" + ask(question))
-        print("----------------------------------------")
+        print(SEPARATOR)
+        logger.debug(SEPARATOR)
 
 
 # 程式的入口：先讀命令列選項、做好啟動設定，再開始聊天
@@ -106,7 +110,7 @@ def main():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="把每次送給模型、模型回覆的完整內容寫進 " + LOG_FILE,
+        help="把每次送給模型、模型回覆的完整內容寫進 " + LOG_DIR + "/今天的日期.log",
     )
     args = parser.parse_args()
 
@@ -114,15 +118,20 @@ def main():
     if args.debug:
         # 資料夾不存在就先建好；exist_ok=True 是「已經有了也不要報錯」
         os.makedirs(LOG_DIR, exist_ok=True)
+
+        # 一天一個檔，檔名是今天的日期，例如 logs/2026-11-27.log。
+        # 今天的檔案還沒有就會自動建立，已經有了就接在後面寫
+        log_file = LOG_DIR + "/" + date.today().isoformat() + ".log"
+
         logging.basicConfig(
             level=logging.DEBUG,
-            # 有給 filename，log 就改寫進檔案（接在舊內容後面），不再印到終端機
-            filename=LOG_FILE,
+            # 有給 filename，log 就改寫進檔案，不再印到終端機
+            filename=log_file,
             encoding="utf-8",
             # 每一筆 log 的開頭長什麼樣子：時間、等級、哪個檔案記的，然後才是內容
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
-        print("（除錯紀錄會寫到 " + LOG_FILE + "）")
+        print("（除錯紀錄會寫到 " + log_file + "）")
 
     chat_loop()
 
