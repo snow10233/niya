@@ -3,11 +3,10 @@ import json
 import logging
 import os
 import urllib.request
-from datetime import date
 
 from dotenv import load_dotenv
 
-from niya.debug import pretty
+from niya.debug import DailyFileHandler, pretty
 from niya.tools import TOOLS, run_tool
 
 load_dotenv()
@@ -116,22 +115,17 @@ def main():
 
     # 除錯開關：有加 --debug，才把 DEBUG 等級的 log 寫進檔案
     if args.debug:
-        # 資料夾不存在就先建好；exist_ok=True 是「已經有了也不要報錯」
-        os.makedirs(LOG_DIR, exist_ok=True)
-
-        # 一天一個檔，檔名是今天的日期，例如 logs/2026-11-27.log。
-        # 今天的檔案還沒有就會自動建立，已經有了就接在後面寫
-        log_file = LOG_DIR + "/" + date.today().isoformat() + ".log"
+        # 一天一個檔，例如 logs/2026-11-27.log，跨過半夜會自動換檔
+        handler = DailyFileHandler(LOG_DIR)
 
         logging.basicConfig(
             level=logging.DEBUG,
-            # 有給 filename，log 就改寫進檔案，不再印到終端機
-            filename=log_file,
-            encoding="utf-8",
+            # log 交給這個寫手處理，所以會寫進檔案，不再印到終端機
+            handlers=[handler],
             # 每一筆 log 的開頭長什麼樣子：時間、等級、哪個檔案記的，然後才是內容
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
-        print("（除錯紀錄會寫到 " + log_file + "）")
+        print("（除錯紀錄會寫到 " + handler.current_file() + "）")
 
     chat_loop()
 

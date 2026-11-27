@@ -30,9 +30,9 @@ niya 是主人自己寫的長期運行 agent，目標是取代跑在 Hermes Agen
 
 `uv run niya`。程式開頭的 `load_dotenv()` 會把 `.env` 裡的密鑰讀進環境變數。
 
-程式都放在 `src/niya/`，是一個叫 `niya` 的 Python 套件：`main.py` 是對話和 agent 迴圈，`tools.py` 是工具，`debug.py` 是除錯用的排版。套件內互相引入寫 `from niya.tools import ...`。
+程式都放在 `src/niya/`，是一個叫 `niya` 的 Python 套件：`main.py` 是對話和 agent 迴圈，`tools.py` 是工具，`debug.py` 是除錯用的排版，以及一天一個檔的 log 寫手。套件內互相引入寫 `from niya.tools import ...`。
 
-除錯輸出用內建的 `logging`，不用 `print`，也不用註解掉的程式：`logger.debug(...)` 一直留在程式裡，`uv run niya --debug` 才會寫進 `logs/` 底下以當天日期命名的檔案，例如 `logs/2026-11-27.log`（不進 git）。給使用者看的畫面（例如「使用工具」那行）維持 `print`。
+除錯輸出用內建的 `logging`，不用 `print`，也不用註解掉的程式：`logger.debug(...)` 一直留在程式裡，`uv run niya --debug` 才會寫進 `logs/` 底下以當天日期命名的檔案，例如 `logs/2026-11-27.log`（不進 git），跨過半夜會自動換檔。給使用者看的畫面（例如「使用工具」那行）維持 `print`。
 
 ## 測試
 
