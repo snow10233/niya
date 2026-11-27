@@ -1,15 +1,25 @@
+import argparse
 import json
+import logging
 import os
 import urllib.request
 
 from dotenv import load_dotenv
 
-# show 平常沒用到，是留給除錯用的（把下面 call_model 裡的 show(body) 取消註解）。
-# 行尾的 noqa 是告訴 ruff：這行「引入了卻沒用到」（代號 F401）是故意的，不要報錯
-from niya.debug import show  # noqa: F401
+from niya.debug import DailyFileHandler, pretty
 from niya.tools import TOOLS, run_tool
 
 load_dotenv()
+
+# 這個檔案專用的記錄器。__name__ 是這個檔案的名字（niya.main），會出現在每一行 log 的開頭
+logger = logging.getLogger(__name__)
+
+# 除錯紀錄放哪個資料夾。路徑是從「執行指令時所在的資料夾」算起
+LOG_DIR = "logs"
+
+# 一輪問答結束後畫的橫線，聊天畫面和 log 檔都用同一條
+SEPARATOR = "----------------------------------------"
+
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
 messages = []
@@ -32,10 +42,15 @@ def call_model():
         },
     )
 
-    # show(body)
+    # 這行一直留著：平常不會記，啟動時加 --debug 才會寫進 log 檔
+    logger.debug("送給模型的內容：\n" + pretty(body))
 
     with urllib.request.urlopen(request) as response:
-        return json.load(response)
+        reply = json.load(response)
+
+    logger.debug("模型回覆的內容：\n" + pretty(reply))
+
+    return reply
 
 
 def ask(question):
@@ -83,8 +98,37 @@ def chat_loop():
             return
 
         print("niya：" + ask(question))
-        print("----------------------------------------")
+        print(SEPARATOR)
+        logger.debug(SEPARATOR)
+
+
+# 程式的入口：先讀命令列選項、做好啟動設定，再開始聊天
+def main():
+    parser = argparse.ArgumentParser()
+    # action="store_true"：這個選項後面不用接值，有出現就是 True，沒出現就是 False
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="把每次送給模型、模型回覆的完整內容寫進 " + LOG_DIR + "/今天的日期.log",
+    )
+    args = parser.parse_args()
+
+    # 除錯開關：有加 --debug，才把 DEBUG 等級的 log 寫進檔案
+    if args.debug:
+        # 一天一個檔，例如 logs/2026-11-27.log，跨過半夜會自動換檔
+        handler = DailyFileHandler(LOG_DIR)
+
+        logging.basicConfig(
+            level=logging.DEBUG,
+            # log 交給這個寫手處理，所以會寫進檔案，不再印到終端機
+            handlers=[handler],
+            # 每一筆 log 的開頭長什麼樣子：時間、等級、哪個檔案記的，然後才是內容
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        print("（除錯紀錄會寫到 " + handler.current_file() + "）")
+
+    chat_loop()
 
 
 if __name__ == "__main__":
-    chat_loop()
+    main()
