@@ -14,6 +14,10 @@ load_dotenv()
 # 這個檔案專用的記錄器。__name__ 是這個檔案的名字（niya.main），會出現在每一行 log 的開頭
 logger = logging.getLogger(__name__)
 
+# 除錯紀錄放哪。路徑是從「執行指令時所在的資料夾」算起
+LOG_DIR = "logs"
+LOG_FILE = LOG_DIR + "/niya.log"
+
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
 messages = []
@@ -36,11 +40,15 @@ def call_model():
         },
     )
 
-    # 這行一直留著：平常不會印，啟動時加 --debug 才會印出來
+    # 這行一直留著：平常不會記，啟動時加 --debug 才會寫進 log 檔
     logger.debug("送給模型的內容：\n" + pretty(body))
 
     with urllib.request.urlopen(request) as response:
-        return json.load(response)
+        reply = json.load(response)
+
+    logger.debug("模型回覆的內容：\n" + pretty(reply))
+
+    return reply
 
 
 def ask(question):
@@ -98,13 +106,23 @@ def main():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="印出每次送給模型的完整內容",
+        help="把每次送給模型、模型回覆的完整內容寫進 " + LOG_FILE,
     )
     args = parser.parse_args()
 
-    # 除錯開關：有加 --debug，才把 DEBUG 等級的 log 印出來
+    # 除錯開關：有加 --debug，才把 DEBUG 等級的 log 寫進檔案
     if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
+        # 資料夾不存在就先建好；exist_ok=True 是「已經有了也不要報錯」
+        os.makedirs(LOG_DIR, exist_ok=True)
+        logging.basicConfig(
+            level=logging.DEBUG,
+            # 有給 filename，log 就改寫進檔案（接在舊內容後面），不再印到終端機
+            filename=LOG_FILE,
+            encoding="utf-8",
+            # 每一筆 log 的開頭長什麼樣子：時間、等級、哪個檔案記的，然後才是內容
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        print("（除錯紀錄會寫到 " + LOG_FILE + "）")
 
     chat_loop()
 
