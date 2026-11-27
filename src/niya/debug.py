@@ -24,6 +24,6 @@ def unpack(data):
     return data
 
 
-# 除錯用：把資料排版後印出來
-def show(data):
-    print(json.dumps(unpack(data), indent=2, ensure_ascii=False))
+# 除錯用：把資料排版成好讀的文字。只負責排版，要不要印出來由呼叫的人決定
+def pretty(data):
+    return json.dumps(unpack(data), indent=2, ensure_ascii=False)

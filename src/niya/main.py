@@ -1,15 +1,18 @@
 import json
+import logging
 import os
 import urllib.request
 
 from dotenv import load_dotenv
 
-# show 平常沒用到，是留給除錯用的（把下面 call_model 裡的 show(body) 取消註解）。
-# 行尾的 noqa 是告訴 ruff：這行「引入了卻沒用到」（代號 F401）是故意的，不要報錯
-from niya.debug import show  # noqa: F401
+from niya.debug import pretty
 from niya.tools import TOOLS, run_tool
 
 load_dotenv()
+
+# 這個檔案專用的記錄器。__name__ 是這個檔案的名字（niya.main），會出現在每一行 log 的開頭
+logger = logging.getLogger(__name__)
+
 MODEL = "claude-haiku-5-5"
 URL = "https://api.anthropic.com/v1/messages"
 messages = []
@@ -32,7 +35,8 @@ def call_model():
         },
     )
 
-    # show(body)
+    # 這行一直留著：平常不會印，NIYA_DEBUG=1 時才會印出來
+    logger.debug("送給模型的內容：\n" + pretty(body))
 
     with urllib.request.urlopen(request) as response:
         return json.load(response)
@@ -75,6 +79,10 @@ def ask(question):
 
 
 def chat_loop():
+    # 除錯開關：環境變數 NIYA_DEBUG 是 1，才把 DEBUG 等級的 log 印出來
+    if os.environ.get("NIYA_DEBUG") == "1":
+        logging.basicConfig(level=logging.DEBUG)
+
     while True:
         question = input("你：")
 

@@ -1,4 +1,11 @@
-from niya.debug import unpack
+from niya.debug import pretty, unpack
+
+
+# pretty 回傳排版好的文字：有縮排、中文照原樣、JSON 字串也拆開一起排
+def test_pretty_returns_indented_text():
+    text = pretty({"名字": "小雪", "content": "[1]"})
+
+    assert text == '{\n  "名字": "小雪",\n  "content": [\n    1\n  ]\n}'
 
 
 def test_plain_values_stay_the_same():

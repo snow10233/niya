@@ -40,4 +40,10 @@ uv run pre-commit install
 - 排版不對：跑 `uv run ruff format`，它會幫你排好，再 `git add`、重新 commit。
 - 程式檢查不過：照訊息改好，再 `git add`、重新 commit。
 
+想看每次送給模型的完整內容，用除錯模式跑：
+
+```
+NIYA_DEBUG=1 uv run niya
+```
+
 測試用 `uv run pytest`。同樣的檢查和測試，開 PR 時 GitHub 也會再跑一次。
